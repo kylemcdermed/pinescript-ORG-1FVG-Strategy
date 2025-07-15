@@ -1,0 +1,204 @@
+//@version=5
+strategy("ORG & 1st FVG Strategy", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=5, pyramiding=1)
+
+// ==== SETTINGS ====
+var int ORG_MIN_SIZE = 30      // Minimum ORG size to allow trades
+var int ORG_MAX_SIZE = 200     // Maximum ORG size to allow trades
+
+// === INPUTS ===
+org_min_size = input.int(30, "Minimum ORG Size", minval=1)
+org_max_size = input.int(200, "Maximum ORG Size", minval=30)
+
+show_fvg = input.bool(true, "Show 1st FVG")
+show_org = input.bool(true, "Show ORG")
+
+// === TIMEZONE ===
+ny_tz = "America/New_York"
+
+// ==== UTILITIES ===
+// Line style converter
+lineStyle(string style) =>
+    switch style
+        '----' => line.style_dashed
+        '····' => line.style_dotted
+        => line.style_solid
+
+
+// === TIME HELPERS ===
+isNewSession() =>
+    ta.change(time("D", ny_tz))
+
+// ==== OPEN RANGE CALCULATION (9:30-10:00 NY TIME) ====
+var float openRangeHigh = na
+var float openRangeLow = na
+var float openRangeClose = na
+var int   openRangeStartTime = na
+var int   openRangeEndTime = na
+var bool  sessionComplete = false
+
+// Check if bar is inside OR time range 9:30-10:00 NY
+sess_start = timestamp(ny_tz, year, month, dayofmonth, 9, 30)
+sess_end = timestamp(ny_tz, year, month, dayofmonth, 10, 0)
+
+// Accumulate OR High & Low during OR session
+if time >= sess_start and time < sess_end
+    openRangeHigh := math.max(na(openRangeHigh) ? low : openRangeHigh, high)
+    openRangeLow := math.min(na(openRangeLow) ? high : openRangeLow, low)
+    openRangeStartTime := sess_start
+    sessionComplete := false
+
+// Mark session complete after 10:00
+if time >= sess_end and not sessionComplete
+    openRangeClose := close
+    openRangeEndTime := sess_end
+    sessionComplete := true
+
+// Midpoint of ORG
+float openRangeMid = na
+if sessionComplete
+    openRangeMid := (openRangeHigh + openRangeLow) / 2
+
+// ORG SIZE
+float openRangeSize = na
+if sessionComplete
+    openRangeSize := openRangeHigh - openRangeLow
+
+// ==== 1st FVG LOGIC ====
+// Based on your provided logic, simplified for 1m timeframe
+// We check for FVG between 3 consecutive candles after 9:31am
+
+var float fvg_open = na
+var float fvg_close = na
+var int fvg_time = na
+
+var float prevLow1 = na
+var float prevLow2 = na
+var float prevLow3 = na
+var float prevHigh1 = na
+var float prevHigh2 = na
+var float prevHigh3 = na
+
+// Capture lows/highs of last 3 candles (1m timeframe assumed)
+prevLow1 := low[1]
+prevLow2 := low[2]
+prevLow3 := low[3]
+
+prevHigh1 := high[1]
+prevHigh2 := high[2]
+prevHigh3 := high[3]
+
+// Function to test if FVG exists between candles 1 and 3 (l1>h3 or h1<l3)
+fvgExists(l1, h1, l3, h3) =>
+    (l1 > h3) or (h1 < l3)
+
+// Get 1st FVG open/close prices and time (following your logic)
+getFirstFVG() =>
+    var float o = na
+    var float c = na
+    var int t = na
+    // Valid time for 1m FVG: 9:31 to 12:00 NY
+    hourT = hour(time, ny_tz)
+    minT = minute(time, ny_tz)
+    if (hourT == 9 and minT >= 31) or (hourT > 9 and hourT <= 12)
+        if fvgExists(prevLow1, prevHigh1, prevLow3, prevHigh3)
+            // Long or short side logic for open/close based on your detailed condition
+            if prevLow1 > prevHigh3
+                o := prevHigh3
+                c := prevLow1
+            else if prevHigh1 < prevLow3
+                o := prevLow3
+                c := prevHigh1
+            t := time[1]
+    [o, c, t]
+
+// Fetch first FVG values
+[o, c, t] = getFirstFVG()
+
+// Now assign to your persistent variables
+fvg_open := o
+fvg_close := c
+fvg_time := t
+
+// ==== LIQUIDITY SWEEP PLACEHOLDER ====
+// For simplicity, assume liquidity sweep detection via pivot highs/lows or custom logic here.
+// Here we just mock with a basic momentum condition:
+
+// Sell-side liquidity swept: price makes new low after prior support broken
+sellSideSweep = ta.lowestbars(low, 5) == 0
+
+// Buy-side liquidity swept: price makes new high after prior resistance broken
+buySideSweep = ta.highestbars(high, 5) == 0
+
+// ==== TRADE LOGIC CONDITIONS ====
+
+// Filters:
+validOrgSize = sessionComplete and openRangeSize >= org_min_size and openRangeSize <= org_max_size
+validFVG = not na(fvg_open) and not na(fvg_close)
+
+// ORG is in discount or premium
+// Discount: price below midpoint of ORG
+// Premium: price above midpoint of ORG
+
+orgIsDiscount = close < openRangeMid
+orgIsPremium = close > openRangeMid
+
+// Price position relative to 50% of ORG at FVG time
+priceAtFVG = close  // Approximate current price at FVG time
+
+priceBelow50PctORG = close < openRangeMid
+priceAbove50PctORG = close > openRangeMid
+
+// LONG ENTRY CONDITION:
+// 1) Sell-side liquidity swept
+// 2) ORG in discount
+// 3) Price closes above 1st FVG
+// 4) Price below 50% of ORG at FVG time
+longEntry = validOrgSize and validFVG and sellSideSweep and orgIsDiscount and (close > fvg_close) and priceBelow50PctORG
+
+// SHORT ENTRY CONDITION:
+// 1) Buy-side liquidity swept
+// 2) ORG in premium
+// 3) Price closes below 1st FVG
+// 4) Price above 50% of ORG at FVG time
+shortEntry = validOrgSize and validFVG and buySideSweep and orgIsPremium and (close < fvg_close) and priceAbove50PctORG
+
+// ==== TARGET and STOP LOSS ====
+// Target: 50% midpoint of ORG
+targetPrice = openRangeMid
+
+// Stop Loss:
+// Long stop loss: low of FVG candle (approximate as min(fvg_open, fvg_close))
+// Short stop loss: high of FVG candle (approximate as max(fvg_open, fvg_close))
+longStopLoss = math.min(fvg_open, fvg_close)
+shortStopLoss = math.max(fvg_open, fvg_close)
+
+// ==== EXECUTE TRADES ====
+if (longEntry) and strategy.position_size <= 0
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long Exit", from_entry="Long", stop=longStopLoss, limit=targetPrice)
+
+if (shortEntry) and strategy.position_size >= 0
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short Exit", from_entry="Short", stop=shortStopLoss, limit=targetPrice)
+
+// ==== PLOT VISUALS ====
+// Plot Open Range Lines
+if sessionComplete and show_org
+    line.new(openRangeStartTime, openRangeHigh, openRangeEndTime, openRangeHigh, color=color.gray, width=2, style=line.style_dashed, extend=extend.right)
+    line.new(openRangeStartTime, openRangeLow, openRangeEndTime, openRangeLow, color=color.gray, width=2, style=line.style_dashed, extend=extend.right)
+    line.new(openRangeStartTime, openRangeClose, openRangeEndTime, openRangeClose, color=color.gray, width=2, style=line.style_solid, extend=extend.right)
+    // Midpoint dashed line
+    line.new(openRangeStartTime, openRangeMid, openRangeEndTime, openRangeMid, color=color.orange, width=1, style=line.style_dotted, extend=extend.right)
+
+// Plot 1st FVG box and lines
+int maxLookahead = 500
+int futureBarIndex = bar_index + 5  // 5 bars ahead - adjust as needed
+
+if validFVG and show_fvg and (futureBarIndex - bar_index) <= maxLookahead
+    line.new(bar_index, fvg_open, futureBarIndex, fvg_open, color=color.green, width=2, style=line.style_dashed)
+    line.new(bar_index, fvg_close, futureBarIndex, fvg_close, color=color.green, width=2, style=line.style_dashed)
+    box.new(bar_index, fvg_open, futureBarIndex, fvg_close, border_color=color.green, bgcolor=color.new(color.green, 90))
+
+// Plot entries and exits
+plotshape(strategy.position_size > 0, title="Long", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
+plotshape(strategy.position_size < 0, title="Short", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
