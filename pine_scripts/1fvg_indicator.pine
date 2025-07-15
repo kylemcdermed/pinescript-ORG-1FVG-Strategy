@@ -1,9 +1,5 @@
 //@version=5
-strategy("ORG & 1st FVG Strategy", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=5, pyramiding=1)
-
-// ==== SETTINGS ====
-var int ORG_MIN_SIZE = 30      // Minimum ORG size to allow trades
-var int ORG_MAX_SIZE = 200     // Maximum ORG size to allow trades
+strategy("ORG & 1st FVG Strategy", overlay=true, initial_capital=100000, default_qty_type=strategy.percent_of_equity, default_qty_value=5, pyramiding=1, calc_on_every_tick=true)
 
 // === INPUTS ===
 org_min_size = input.int(30, "Minimum ORG Size", minval=1)
@@ -23,7 +19,6 @@ lineStyle(string style) =>
         '····' => line.style_dotted
         => line.style_solid
 
-
 // === TIME HELPERS ===
 isNewSession() =>
     ta.change(time("D", ny_tz))
@@ -39,6 +34,9 @@ var bool  sessionComplete = false
 // Check if bar is inside OR time range 9:30-10:00 NY
 sess_start = timestamp(ny_tz, year, month, dayofmonth, 9, 30)
 sess_end = timestamp(ny_tz, year, month, dayofmonth, 10, 0)
+
+// Line end time - 10:10 AM EST as requested
+line_end_time = timestamp(ny_tz, year, month, dayofmonth, 10, 10)
 
 // Accumulate OR High & Low during OR session
 if time >= sess_start and time < sess_end
@@ -70,6 +68,7 @@ if sessionComplete
 var float fvg_open = na
 var float fvg_close = na
 var int fvg_time = na
+var int fvg_bar_index = na
 
 var float prevLow1 = na
 var float prevLow2 = na
@@ -96,6 +95,7 @@ getFirstFVG() =>
     var float o = na
     var float c = na
     var int t = na
+    var int b = na
     // Valid time for 1m FVG: 9:31 to 12:00 NY
     hourT = hour(time, ny_tz)
     minT = minute(time, ny_tz)
@@ -109,15 +109,17 @@ getFirstFVG() =>
                 o := prevLow3
                 c := prevHigh1
             t := time[1]
-    [o, c, t]
+            b := bar_index
+    [o, c, t, b]
 
 // Fetch first FVG values
-[o, c, t] = getFirstFVG()
+[o, c, t, b] = getFirstFVG()
 
 // Now assign to your persistent variables
 fvg_open := o
 fvg_close := c
 fvg_time := t
+fvg_bar_index := b
 
 // ==== LIQUIDITY SWEEP PLACEHOLDER ====
 // For simplicity, assume liquidity sweep detection via pivot highs/lows or custom logic here.
@@ -182,22 +184,31 @@ if (shortEntry) and strategy.position_size >= 0
     strategy.exit("Short Exit", from_entry="Short", stop=shortStopLoss, limit=targetPrice)
 
 // ==== PLOT VISUALS ====
-// Plot Open Range Lines
+// Plot Open Range Lines - FIXED: Using xloc.bar_time and specific end time instead of extend.right
 if sessionComplete and show_org
-    line.new(openRangeStartTime, openRangeHigh, openRangeEndTime, openRangeHigh, color=color.gray, width=2, style=line.style_dashed, extend=extend.right)
-    line.new(openRangeStartTime, openRangeLow, openRangeEndTime, openRangeLow, color=color.gray, width=2, style=line.style_dashed, extend=extend.right)
-    line.new(openRangeStartTime, openRangeClose, openRangeEndTime, openRangeClose, color=color.gray, width=2, style=line.style_solid, extend=extend.right)
+    line.new(openRangeStartTime, openRangeHigh, line_end_time, openRangeHigh, xloc=xloc.bar_time, color=color.gray, width=2, style=line.style_dashed)
+    line.new(openRangeStartTime, openRangeLow, line_end_time, openRangeLow, xloc=xloc.bar_time, color=color.gray, width=2, style=line.style_dashed)
+    line.new(openRangeStartTime, openRangeClose, line_end_time, openRangeClose, xloc=xloc.bar_time, color=color.gray, width=2, style=line.style_solid)
     // Midpoint dashed line
-    line.new(openRangeStartTime, openRangeMid, openRangeEndTime, openRangeMid, color=color.orange, width=1, style=line.style_dotted, extend=extend.right)
+    line.new(openRangeStartTime, openRangeMid, line_end_time, openRangeMid, xloc=xloc.bar_time, color=color.orange, width=1, style=line.style_dotted)
 
-// Plot 1st FVG box and lines
-int maxLookahead = 500
-int futureBarIndex = bar_index + 5  // 5 bars ahead - adjust as needed
+// Plot 1st FVG using plot functions instead of drawing objects
+// This approach uses plot functions which don't have the 500 bar future limit
+fvg_high_plot = validFVG and show_fvg ? fvg_open : na
+fvg_low_plot = validFVG and show_fvg ? fvg_close : na
 
-if validFVG and show_fvg and (futureBarIndex - bar_index) <= maxLookahead
-    line.new(bar_index, fvg_open, futureBarIndex, fvg_open, color=color.green, width=2, style=line.style_dashed)
-    line.new(bar_index, fvg_close, futureBarIndex, fvg_close, color=color.green, width=2, style=line.style_dashed)
-    box.new(bar_index, fvg_open, futureBarIndex, fvg_close, border_color=color.green, bgcolor=color.new(color.green, 90))
+// Plot FVG levels
+plot(fvg_high_plot, title="FVG High", color=color.green, linewidth=2, style=plot.style_line)
+plot(fvg_low_plot, title="FVG Low", color=color.green, linewidth=2, style=plot.style_line)
+
+// Fill between FVG levels
+fill(plot(fvg_high_plot, display=display.none), plot(fvg_low_plot, display=display.none), color=color.new(color.green, 90), title="FVG Fill")
+
+// FVG Box - FIXED: Using xloc.bar_time with specific end time (10:10 AM EST)
+if validFVG and show_fvg and not na(fvg_time)
+    // Draw box from FVG time to 10:10 AM EST
+    fvg_box_end_time = timestamp(ny_tz, year, month, dayofmonth, 10, 10)
+    box.new(left=fvg_time, top=math.max(fvg_open, fvg_close), right=fvg_box_end_time, bottom=math.min(fvg_open, fvg_close), xloc=xloc.bar_time, border_color=color.green, bgcolor=color.new(color.green, 90))
 
 // Plot entries and exits
 plotshape(strategy.position_size > 0, title="Long", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
