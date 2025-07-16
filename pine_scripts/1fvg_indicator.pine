@@ -1,5 +1,3 @@
-// This Pine Script™ code is subject to the terms of the Mozilla Public License 2.0 at https://mozilla.org/MPL/2.0/
-// © fadizeidan
 
 //@version=5
 indicator("ORG 1PDA BSL/SSL STRATEGY", overlay=true, dynamic_requests = true, max_lines_count = 500 )
