@@ -1,5 +1,5 @@
 //@version=5
-indicator("ORG 1PDA BSL/SSL STRATEGY", overlay=true, dynamic_requests = true, max_lines_count = 500 )
+strategy("ORG 1PDA BSL/SSL STRATEGY", overlay=true, dynamic_requests = true, max_lines_count = 500 )
 
 //------------------------------------------------------------------------------
 //ORG 1PDA CODE BELOW 
@@ -879,7 +879,6 @@ if b_liq_V.size() > 0
                 if b.i - cb.get_left() > 21
                     cb.set_text_color(color.new(color.gray, 25))
 
-//-----------------------------------------------------------------------------}
 
 //------------------------------------------------------------------------------
 //TRADING LOGIC BELOW 
@@ -909,7 +908,6 @@ if b_liq_V.size() > 0
 // 9. If price is 11 points past the entry price, stop loss goes 
 // 2 points into profit 
 
-
 // -------- GLOBAL STATE --------
 var bool algoActive = false
 var bool orgTouched50Percent = false
@@ -934,6 +932,7 @@ type TradeState
     bool tradeActive
 
 // ------ HELPER FUNCTIONS --------
+
 getTradingHours() =>
     currentHour = hour(time, "America/New_York")
     currentMinute = minute(time, "America/New_York")
@@ -1012,9 +1011,7 @@ getTradeSetup(OpenRange org) =>
 // --------- MAIN LOGIC FUNCTION ---------
 // This function ONLY reads inputs & RETURNS updated state WITHOUT mutating inputs
 executeTradingLogic(bool algoActive_in, bool orgTouched50Percent_in, bool liquiditySwept_in, bool orderPlaced_in, float entryPrice_in, float stopLoss_in, float takeProfit_in, int entryTime_in, bool tradeActive_in) =>
-
-
-    // Start with incoming state
+    // Incoming state copies
     bool algoActive_out = algoActive_in
     bool orgTouched50Percent_out = orgTouched50Percent_in
     bool liquiditySwept_out = liquiditySwept_in
@@ -1024,13 +1021,12 @@ executeTradingLogic(bool algoActive_in, bool orgTouched50Percent_in, bool liquid
     float takeProfit_out = takeProfit_in
     int entryTime_out = entryTime_in
     bool tradeActive_out = tradeActive_in
-    
+
     if not validtimeframe() or ranges.size() == 0
         [algoActive_out, orgTouched50Percent_out, liquiditySwept_out, orderPlaced_out, entryPrice_out, stopLoss_out, takeProfit_out, entryTime_out, tradeActive_out]
     else
         OpenRange org = ranges.first()
 
-        // Reset algorithm daily
         if sessionStarted()
             algoActive_out := false
             orgTouched50Percent_out := false
@@ -1041,7 +1037,7 @@ executeTradingLogic(bool algoActive_in, bool orgTouched50Percent_in, bool liquid
             takeProfit_out := na
             entryTime_out := na
             tradeActive_out := false
-
+        
         if not na(org.open) and not na(org.close)
             orgSize = math.abs(org.open - org.close)
             if orgSize >= 30 and orgSize <= 250
@@ -1068,6 +1064,8 @@ executeTradingLogic(bool algoActive_in, bool orgTouched50Percent_in, bool liquid
 
                                 if not na(entryPrice_out)
                                     label.new(bar_index, entryPrice_out, "BUY ENTRY", color=color.green, textcolor=color.white, style=label.style_label_up, size=size.small)
+                                    // PLACE ENTRY ORDER here
+                                    strategy.entry("Long", strategy.long, limit=entryPrice_out)
 
                         currentHour = hour(time, "America/New_York")
                         if currentHour >= 10
@@ -1079,6 +1077,9 @@ executeTradingLogic(bool algoActive_in, bool orgTouched50Percent_in, bool liquid
                 label.new(bar_index, close, "FILLED", color=color.blue, textcolor=color.white, style=label.style_label_down, size=size.small)
 
             if tradeActive_out
+                // TAKE PROFIT & STOP LOSS USING strategy.exit
+                strategy.exit("Exit Long", "Long", stop=stopLoss_out, limit=takeProfit_out)
+
                 if not na(takeProfit_out) and close >= takeProfit_out
                     tradeActive_out := false
                     label.new(bar_index, close, "TP HIT", color=color.green, textcolor=color.white, style=label.style_label_down, size=size.small)
@@ -1086,17 +1087,20 @@ executeTradingLogic(bool algoActive_in, bool orgTouched50Percent_in, bool liquid
                     tradeActive_out := false
                     label.new(bar_index, close, "SL HIT", color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
                 else
+                    // TRAILING STOP LOGIC - update stop loss dynamically if price moves up
                     newStop = checkTrailingStop(entryPrice_out, close)
                     if not na(newStop) and newStop > stopLoss_out
                         stopLoss_out := newStop
                         label.new(bar_index, stopLoss_out, "TRAIL SL", color=color.orange, textcolor=color.white, style=label.style_label_down, size=size.tiny)
+                        // Update exit order stop loss dynamically
+                        strategy.exit("Exit Long", "Long", stop=stopLoss_out, limit=takeProfit_out)
 
         [algoActive_out, orgTouched50Percent_out, liquiditySwept_out, orderPlaced_out, entryPrice_out, stopLoss_out, takeProfit_out, entryTime_out, tradeActive_out]
 
 // --- RUN MAIN LOGIC & UPDATE GLOBALS ---
 [algoActive_out, orgTouched50Percent_out, liquiditySwept_out, orderPlaced_out, entryPrice_out, stopLoss_out, takeProfit_out, entryTime_out, tradeActive_out] = executeTradingLogic(algoActive, orgTouched50Percent, liquiditySwept, orderPlaced, entryPrice, stopLoss, takeProfit, entryTime, tradeActive)
 
-// Re-assign outputs back into global vars (do not redeclare!)
+// Re-assign outputs back into global vars (do NOT redeclare!)
 algoActive := algoActive_out
 orgTouched50Percent := orgTouched50Percent_out
 liquiditySwept := liquiditySwept_out
@@ -1106,26 +1110,3 @@ stopLoss := stopLoss_out
 takeProfit := takeProfit_out
 entryTime := entryTime_out
 tradeActive := tradeActive_out
-
-// --- PLOTS & TABLES ---
-plotchar(orgTouched50Percent, "50% Touched", "●", location.top, color.red, size=size.small)
-plotchar(liquiditySwept, "Liquidity Swept", "▲", location.top, color.orange, size=size.small)
-plotchar(orderPlaced, "Order Placed", "♦", location.top, color.green, size=size.small)
-plotchar(tradeActive, "Trade Active", "★", location.top, color.blue, size=size.small)
-
-plot(tradeActive ? entryPrice : na, "Entry Price", color.green, linewidth=2, style=plot.style_line)
-plot(tradeActive ? stopLoss : na, "Stop Loss", color.red, linewidth=2, style=plot.style_line)
-plot(tradeActive ? takeProfit : na, "Take Profit", color.blue, linewidth=2, style=plot.style_line)
-
-// Table display
-if tradeActive or orderPlaced
-    var table infoTable = table.new(position.top_right, 2, 6, bgcolor=color.white, border_width=1)
-    
-    table.cell(infoTable, 0, 0, "Status", bgcolor=color.gray, text_color=color.white)
-    table.cell(infoTable, 1, 0, tradeActive ? "ACTIVE" : "PENDING", bgcolor=tradeActive ? color.green : color.orange, text_color=color.white)
-    
-    table.cell(infoTable, 0, 1, "Entry", bgcolor=color.gray, text_color=color.white)
-    table.cell(infoTable, 1, 1, not na(entryPrice) ? str.tostring(entryPrice, "#.##") : "N/A", bgcolor=color.white, text_color=color.black)
-    
-    table.cell(infoTable, 0, 2, "Stop Loss", bgcolor=color.gray, text_color=color.white)
-    table.cell(infoTable, 1, 2, not na(stopLoss) ? str.tostring(stopLoss, "#.##") : "N/A", bgcolor=color.red)
