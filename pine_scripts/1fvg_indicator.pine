@@ -884,282 +884,172 @@ if b_liq_V.size() > 0
 //TRADING LOGIC BELOW 
 //-----------------------------------------------------------------------------{
 
-// 1. is the opening range gap greater than 30 points 
-// and less than 250?
-// 2. if yes, capture if its in a premium or discount 
-// variable should be named isPremium / isDiscount
-// 3. Have we already after 930 touched the 50% of the ORG?
-// if yes, exit the algorithm... (line_ce variable is a line for 
-// ORG but not sure we have a float variable capturing that actual price)
-// 4. Have we swept (for this example gone below) liquidity from 7am to 930, after 930? if there is 
-// no liquidity from 7-930am, then search further back inside the 
-// array for the liquidity
-// also remember - is our variable isDiscount is TRUE, the algorithm 
-// should only be searching for sell side liquidity inside the array 
-// 5. If yes, we have swept (for this example gone below) the liquidity,
-// Has the current price closed above the low of the top (1st) candle stick 
-// of the 1st fair value gap?
-// 6. If yes, set a buy limit order on the low of the 1st fair value gap 
-// or the "high" of the fair value gap box.
-// Stop loss should be below the 3rd candle sticks low that creates the 
-// fair value gap 
-// 7. Take profit target should be 50% of the Opening Range Gap 
-// 8 Do not take a trade past 10am 
-// 9. If price is 11 points past the entry price, stop loss goes 
-// 2 points into profit 
 
-// ------- GLOBAL STATE -------
-var bool algoActive = false
-var bool orgTouched50Percent = false
-var bool liquiditySwept = false
-var bool orderPlaced = false
-var float entryPrice = na
-var float stopLoss = na
-var float takeProfit = na
-var int entryTime = na
-var bool tradeActive = false
-var bool isShort = false
-var bool orgCETouched = false  // New: Track if ORG CE has been touched
-var bool waitingForEntry = false  // New: Track if we're waiting for entry trigger
-var float pendingEntryPrice = na  // New: Track pending limit order price
-var float pendingStopLoss = na    // New: Track pending stop loss
-var float pendingTakeProfit = na  // New: Track pending take profit
+//------------------------------------------------------------------------------
+//TRADING LOGIC
+//-----------------------------------------------------------------------------{
 
-// Helper function to check if ORG CE has been touched
-isORGCETouched(OpenRange org) =>
-    if not na(org.close) and not na(org.open)
-        ceLevel = (org.open + org.close) / 2
-        // Check if current bar touched CE level
-        (high >= ceLevel and low <= ceLevel) or math.abs(close - ceLevel) < 0.01
-    else
-        false
+// Trading state variables
+var bool trade_entered = false
+var bool liquidity_swept = false
+var float entry_price = na
+var float stop_loss = na
+var float take_profit = na
+var bool algorithm_closed = false
+var float nearest_bsl = na
+var float nearest_ssl = na
+var bool limit_order_placed = false
+var float limit_order_price = na
 
-// Helper function to check if sellside liquidity has been swept
-isSellsideLiquiditySwept() =>
-    result = false
-    if b_liq_S.size() > 0
-        for i = 0 to b_liq_S.size() - 1
-            liqLevel = b_liq_S.get(i)
-            if liqLevel.brL  // If liquidity level is broken
-                result := true
-                break
-    result
-
-// Helper function to check if buyside liquidity has been swept
-isBuysideLiquiditySwept() =>
-    result = false
+// Helper function to find nearest buy side liquidity
+getNearestBSL() =>
+    float nearest = na
+    float current_price = close
+    float min_distance = 999999.0
+    
     if b_liq_B.size() > 0
         for i = 0 to b_liq_B.size() - 1
-            liqLevel = b_liq_B.get(i)
-            if liqLevel.brL  // If liquidity level is broken
-                result := true
-                break
-    result
+            liq_level = b_liq_B.get(i)
+            if not liq_level.brL // Only consider unbroken liquidity
+                distance = math.abs(liq_level.ln.get_y1() - current_price)
+                if distance < min_distance
+                    min_distance := distance
+                    nearest := liq_level.ln.get_y1()
+    nearest
 
-// Helper function to get FVG candle data
-getFVGCandleData() =>
-    candle1_high = na(fvg_o) ? na : (fvg_o > fvg_c ? fvg_o : fvg_c)
-    candle1_low = na(fvg_o) ? na : (fvg_o < fvg_c ? fvg_o : fvg_c)
-    candle3_high = na(fvg_o) ? na : (fvg_o > fvg_c ? fvg_c : fvg_o)
-    candle3_low = na(fvg_o) ? na : (fvg_o < fvg_c ? fvg_c : fvg_o)
-    [candle1_high, candle1_low, candle3_high, candle3_low]
-
-// --------- MAIN LOGIC FUNCTION ---------
-executeTradingLogic(bool algoActive_in, bool orgTouched50Percent_in, bool liquiditySwept_in, bool orderPlaced_in, float entryPrice_in, float stopLoss_in, float takeProfit_in, int entryTime_in, bool tradeActive_in, bool isShort_in, bool orgCETouched_in, bool waitingForEntry_in, float pendingEntryPrice_in, float pendingStopLoss_in, float pendingTakeProfit_in) =>
+// Helper function to find nearest sell side liquidity
+getNearestSSL() =>
+    float nearest = na
+    float current_price = close
+    float min_distance = 999999.0
     
-    bool algoActive_out = algoActive_in
-    bool orgTouched50Percent_out = orgTouched50Percent_in
-    bool liquiditySwept_out = liquiditySwept_in
-    bool orderPlaced_out = orderPlaced_in
-    float entryPrice_out = entryPrice_in
-    float stopLoss_out = stopLoss_in
-    float takeProfit_out = takeProfit_in
-    int entryTime_out = entryTime_in
-    bool tradeActive_out = tradeActive_in
-    bool isShort_out = isShort_in
-    bool orgCETouched_out = orgCETouched_in
-    bool waitingForEntry_out = waitingForEntry_in
-    float pendingEntryPrice_out = pendingEntryPrice_in
-    float pendingStopLoss_out = pendingStopLoss_in
-    float pendingTakeProfit_out = pendingTakeProfit_in
+    if b_liq_S.size() > 0
+        for i = 0 to b_liq_S.size() - 1
+            liq_level = b_liq_S.get(i)
+            if not liq_level.brL // Only consider unbroken liquidity
+                distance = math.abs(liq_level.ln.get_y1() - current_price)
+                if distance < min_distance
+                    min_distance := distance
+                    nearest := liq_level.ln.get_y1()
+    nearest
 
-    if not validtimeframe() or ranges.size() == 0
-        [algoActive_out, orgTouched50Percent_out, liquiditySwept_out, orderPlaced_out, entryPrice_out, stopLoss_out, takeProfit_out, entryTime_out, tradeActive_out, isShort_out, orgCETouched_out, waitingForEntry_out, pendingEntryPrice_out, pendingStopLoss_out, pendingTakeProfit_out]
-    else
-        OpenRange org = ranges.first()
+// Check if current time is 11 AM EST or later
+isAlgorithmClosed() =>
+    current_hour = hour(time, "America/New_York")
+    current_hour >= 11
 
-        // RESET DAILY STATE at session start
-        if sessionStarted()
-            algoActive_out := false
-            orgTouched50Percent_out := false
-            liquiditySwept_out := false
-            orderPlaced_out := false
-            entryPrice_out := na
-            stopLoss_out := na
-            takeProfit_out := na
-            entryTime_out := na
-            tradeActive_out := false
-            isShort_out := false
-            orgCETouched_out := false
-            waitingForEntry_out := false
-            pendingEntryPrice_out := na
-            pendingStopLoss_out := na
-            pendingTakeProfit_out := na
-
-        currentHour = hour(time, "America/New_York")
-        currentMinute = minute(time, "America/New_York")
-
-        // Only trade during market hours (9:30 AM - 4:00 PM)
-        if currentHour >= 9 and currentHour < 16 and not tradeActive_out
+// Main trading logic
+if validtimeframe() and not algorithm_closed
+    
+    // Close algorithm at 11 AM EST if no trade entered
+    if isAlgorithmClosed() and not trade_entered
+        algorithm_closed := true
+    
+    if not algorithm_closed and ranges.size() > 0
+        current_org = ranges.first()
+        
+        // Only proceed if we have a complete ORG with valid size
+        if not na(current_org.close) and not na(current_org.open) and current_org.validSize
             
-            // STEP 1: Check ORG Parameters (Non-negotiable)
-            if not na(org.close) and not na(org.open) and org.validSize
-                orgSize = math.abs(org.open - org.close)
+            // PREMIUM ORG LOGIC
+            if current_org.isPremium and not trade_entered
                 
-                // ORG size must be > 30 and < 250
-                if orgSize > 30 and orgSize < 250
-                    algoActive_out := true
+                // Find nearest BSL if not already found
+                if na(nearest_bsl)
+                    nearest_bsl := getNearestBSL()
+                
+                // Check if BSL has been swept
+                if not na(nearest_bsl) and not liquidity_swept
+                    if high > nearest_bsl
+                        liquidity_swept := true
+                
+                // Premium entry logic after BSL sweep
+                if liquidity_swept and not na(current_org.fvg_o) and not na(current_org.fvg_c)
                     
-                    // Check if ORG CE has been touched (disqualifies trade)
-                    if isORGCETouched(org)
-                        orgCETouched_out := true
-                        algoActive_out := false
+                    // Get FVG candle levels (assuming fvg_o is top, fvg_c is bottom for premium)
+                    fvg_candle1_high = math.max(current_org.fvg_o, current_org.fvg_c)
+                    fvg_candle3_high = math.min(current_org.fvg_o, current_org.fvg_c)
                     
-                    // Only proceed if CE hasn't been touched
-                    if algoActive_out and not orgCETouched_out
-                        ceLevel = (org.open + org.close) / 2
+                    // Check if current bar closes above candle #1 high
+                    if close > fvg_candle1_high and not limit_order_placed
+                        limit_order_price := fvg_candle1_high
+                        limit_order_placed := true
+                    
+                    // Check for entry execution (price hits limit order)
+                    if limit_order_placed and low <= limit_order_price and not trade_entered
+                        entry_price := limit_order_price
+                        stop_loss := fvg_candle3_high
+                        nearest_ssl := getNearestSSL()
+                        take_profit := not na(nearest_ssl) ? nearest_ssl : entry_price - 100
+                        trade_entered := true
                         
-                        // STEP 2: Determine if we're in Premium or Discount
-                        if org.isDiscount  // Discount Logic
-                            // Check if sellside liquidity has been swept
-                            if isSellsideLiquiditySwept()
-                                liquiditySwept_out := true
-                                
-                                // STEP 3: Look for 1PDA Entry (Discount)
-                                if not na(fvg_o) and not na(fvg_c)
-                                    [candle1_high, candle1_low, candle3_high, candle3_low] = getFVGCandleData()
-                                    
-                                    // Entry trigger: Current bar closes above LOW of candle #1
-                                    if not na(candle1_low) and close > candle1_low and not waitingForEntry_out
-                                        // Set buy limit order at max low of candle #3
-                                        if not na(candle3_low)
-                                            pendingEntryPrice_out := candle3_low
-                                            pendingStopLoss_out := candle3_low  // Stop loss at max low of candle #3
-                                            pendingTakeProfit_out := ceLevel + (ceLevel - org.open) * 0.5  // 50% of ORG to CE
-                                            waitingForEntry_out := true
-                                            
-                                            // Place buy limit order
-                                            strategy.entry("Long_Discount", strategy.long, limit=pendingEntryPrice_out)
-                                            strategy.exit("Exit_Long_Discount", "Long_Discount", stop=pendingStopLoss_out, limit=pendingTakeProfit_out)
-                                            
-                                            label.new(bar_index, pendingEntryPrice_out, "DISCOUNT LONG SETUP", color=color.green, textcolor=color.white, style=label.style_label_up, size=size.small)
-                                    
-                                    // Check if limit order was filled
-                                    if waitingForEntry_out and not na(pendingEntryPrice_out)
-                                        if low <= pendingEntryPrice_out
-                                            entryPrice_out := pendingEntryPrice_out
-                                            stopLoss_out := pendingStopLoss_out
-                                            takeProfit_out := pendingTakeProfit_out
-                                            entryTime_out := time
-                                            orderPlaced_out := true
-                                            tradeActive_out := true
-                                            isShort_out := false
-                                            waitingForEntry_out := false
-                                            
-                                            label.new(bar_index, entryPrice_out, "DISCOUNT LONG FILLED", color=color.lime, textcolor=color.white, style=label.style_label_up, size=size.small)
+                        // Execute sell trade
+                        strategy.entry("Premium_Sell", strategy.short, qty=1)
+                        strategy.exit("Premium_Exit", "Premium_Sell", stop=stop_loss, limit=take_profit)
+            
+            // DISCOUNT ORG LOGIC  
+            if current_org.isDiscount and not trade_entered
+                
+                // Find nearest SSL if not already found
+                if na(nearest_ssl)
+                    nearest_ssl := getNearestSSL()
+                
+                // Check if SSL has been swept
+                if not na(nearest_ssl) and not liquidity_swept
+                    if low < nearest_ssl
+                        liquidity_swept := true
+                
+                // Discount entry logic after SSL sweep
+                if liquidity_swept and not na(current_org.fvg_o) and not na(current_org.fvg_c)
+                    
+                    // Get FVG candle levels (assuming fvg_c is top, fvg_o is bottom for discount)
+                    fvg_candle1_low = math.min(current_org.fvg_o, current_org.fvg_c)
+                    fvg_candle3_low = math.max(current_org.fvg_o, current_org.fvg_c)
+                    
+                    // Check if current bar closes below candle #1 low
+                    if close < fvg_candle1_low and not limit_order_placed
+                        limit_order_price := fvg_candle3_low
+                        limit_order_placed := true
+                    
+                    // Check for entry execution (price hits limit order)
+                    if limit_order_placed and high >= limit_order_price and not trade_entered
+                        entry_price := limit_order_price
+                        stop_loss := fvg_candle3_low
+                        nearest_bsl := getNearestBSL()
+                        take_profit := not na(nearest_bsl) ? nearest_bsl : entry_price + 100
+                        trade_entered := true
                         
-                        else if org.isPremium  // Premium Logic
-                            // Check if buyside liquidity has been swept
-                            if isBuysideLiquiditySwept()
-                                liquiditySwept_out := true
-                                
-                                // STEP 3: Look for 1PDA Entry (Premium)
-                                if not na(fvg_o) and not na(fvg_c)
-                                    [candle1_high, candle1_low, candle3_high, candle3_low] = getFVGCandleData()
-                                    
-                                    // Entry trigger: Current bar closes below HIGH of candle #3
-                                    if not na(candle3_high) and close < candle3_high and not waitingForEntry_out
-                                        // Set sell limit order at max high of candle #1
-                                        if not na(candle1_high)
-                                            pendingEntryPrice_out := candle1_high
-                                            pendingStopLoss_out := candle3_high  // Stop loss at max high of candle #3
-                                            pendingTakeProfit_out := ceLevel - (org.open - ceLevel) * 0.5  // 50% of ORG to CE
-                                            waitingForEntry_out := true
-                                            
-                                            // Place sell limit order
-                                            strategy.entry("Short_Premium", strategy.short, limit=pendingEntryPrice_out)
-                                            strategy.exit("Exit_Short_Premium", "Short_Premium", stop=pendingStopLoss_out, limit=pendingTakeProfit_out)
-                                            
-                                            label.new(bar_index, pendingEntryPrice_out, "PREMIUM SHORT SETUP", color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
-                                    
-                                    // Check if limit order was filled
-                                    if waitingForEntry_out and not na(pendingEntryPrice_out)
-                                        if high >= pendingEntryPrice_out
-                                            entryPrice_out := pendingEntryPrice_out
-                                            stopLoss_out := pendingStopLoss_out
-                                            takeProfit_out := pendingTakeProfit_out
-                                            entryTime_out := time
-                                            orderPlaced_out := true
-                                            tradeActive_out := true
-                                            isShort_out := true
-                                            waitingForEntry_out := false
-                                            
-                                            label.new(bar_index, entryPrice_out, "PREMIUM SHORT FILLED", color=color.maroon, textcolor=color.white, style=label.style_label_down, size=size.small)
+                        // Execute buy trade
+                        strategy.entry("Discount_Buy", strategy.long, qty=1)
+                        strategy.exit("Discount_Exit", "Discount_Buy", stop=stop_loss, limit=take_profit)
 
-        // Monitor active trades for exit conditions
-        if tradeActive_out
-            // Check if stop loss or take profit hit
-            if not isShort_out  // Long position
-                if low <= stopLoss_out
-                    strategy.close("Long_Discount", comment="Stop Loss Hit")
-                    label.new(bar_index, stopLoss_out, "STOP LOSS", color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
-                    tradeActive_out := false
-                    orderPlaced_out := false
-                else if high >= takeProfit_out
-                    strategy.close("Long_Discount", comment="Take Profit Hit")
-                    label.new(bar_index, takeProfit_out, "TAKE PROFIT", color=color.green, textcolor=color.white, style=label.style_label_up, size=size.small)
-                    tradeActive_out := false
-                    orderPlaced_out := false
-            else  // Short position
-                if high >= stopLoss_out
-                    strategy.close("Short_Premium", comment="Stop Loss Hit")
-                    label.new(bar_index, stopLoss_out, "STOP LOSS", color=color.red, textcolor=color.white, style=label.style_label_up, size=size.small)
-                    tradeActive_out := false
-                    orderPlaced_out := false
-                else if low <= takeProfit_out
-                    strategy.close("Short_Premium", comment="Take Profit Hit")
-                    label.new(bar_index, takeProfit_out, "TAKE PROFIT", color=color.green, textcolor=color.white, style=label.style_label_down, size=size.small)
-                    tradeActive_out := false
-                    orderPlaced_out := false
+// Profit management - move stop loss to 5 points profit when in 20 points profit
+if trade_entered and not na(entry_price) and ranges.size() > 0
+    current_org = ranges.first()
+    if current_org.isPremium and strategy.position_size < 0
+        // For short positions, profit is when current price is below entry
+        current_profit = entry_price - close
+        if current_profit >= 20 and stop_loss != entry_price - 5
+            stop_loss := entry_price - 5
+            strategy.exit("Premium_Exit", "Premium_Sell", stop=stop_loss, limit=take_profit)
+    
+    if current_org.isDiscount and strategy.position_size > 0
+        // For long positions, profit is when current price is above entry
+        current_profit = close - entry_price
+        if current_profit >= 20 and stop_loss != entry_price + 5
+            stop_loss := entry_price + 5
+            strategy.exit("Discount_Exit", "Discount_Buy", stop=stop_loss, limit=take_profit)
 
-        // End of day cleanup
-        if currentHour == 16 and currentMinute == 0
-            if tradeActive_out
-                strategy.close_all(comment="End of Day")
-                label.new(bar_index, close, "EOD EXIT", color=color.gray, textcolor=color.white, style=label.style_label_down, size=size.small)
-            tradeActive_out := false
-            orderPlaced_out := false
-            waitingForEntry_out := false
-            algoActive_out := false
+// Reset variables for new trading day
+if ta.change(time("1D"))
+    trade_entered := false
+    liquidity_swept := false
+    entry_price := na
+    stop_loss := na
+    take_profit := na
+    algorithm_closed := false
+    nearest_bsl := na
+    nearest_ssl := na
+    limit_order_placed := false
+    limit_order_price := na
 
-    [algoActive_out, orgTouched50Percent_out, liquiditySwept_out, orderPlaced_out, entryPrice_out, stopLoss_out, takeProfit_out, entryTime_out, tradeActive_out, isShort_out, orgCETouched_out, waitingForEntry_out, pendingEntryPrice_out, pendingStopLoss_out, pendingTakeProfit_out]
-
-// --- RUN MAIN LOGIC & UPDATE GLOBALS ---
-[algoActive_out, orgTouched50Percent_out, liquiditySwept_out, orderPlaced_out, entryPrice_out, stopLoss_out, takeProfit_out, entryTime_out, tradeActive_out, isShort_out, orgCETouched_out, waitingForEntry_out, pendingEntryPrice_out, pendingStopLoss_out, pendingTakeProfit_out] = executeTradingLogic(algoActive, orgTouched50Percent, liquiditySwept, orderPlaced, entryPrice, stopLoss, takeProfit, entryTime, tradeActive, isShort, orgCETouched, waitingForEntry, pendingEntryPrice, pendingStopLoss, pendingTakeProfit)
-
-// Re-assign outputs back into global vars
-algoActive := algoActive_out
-orgTouched50Percent := orgTouched50Percent_out
-liquiditySwept := liquiditySwept_out
-orderPlaced := orderPlaced_out
-entryPrice := entryPrice_out
-stopLoss := stopLoss_out
-takeProfit := takeProfit_out
-entryTime := entryTime_out
-tradeActive := tradeActive_out
-isShort := isShort_out
-orgCETouched := orgCETouched_out
-waitingForEntry := waitingForEntry_out
-pendingEntryPrice := pendingEntryPrice_out
-pendingStopLoss := pendingStopLoss_out
-pendingTakeProfit := pendingTakeProfit_out
