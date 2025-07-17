@@ -1,520 +1,9 @@
-//@version=5
-strategy("ORG 1PDA BSL/SSL STRATEGY", overlay=true, dynamic_requests = true, max_lines_count = 500 )
-
-//------------------------------------------------------------------------------
-//ORG 1PDA CODE BELOW 
-//-----------------------------------------------------------------------------{
-
-
-type Settings
-    bool    show_fvg
-    bool    show_openrange
-    bool    show_fvg_bg
-    color   fvg_bg
-    color   fvg_o
-    string  fvg_o_style
-    color   fvg_c
-    string  fvg_c_style
-    color   fvg_ce
-    string  fvg_ce_style
-    color   fvg_link
-    string  fvg_link_style
-    bool    fvg_show_label
-    string  fvg_label_size
-    color   fvg_label_color
-    color   fvg_label_bg
-    bool    fvg_extend_monday
-    bool    fvg_extend_all
-    bool    show_org_bg
-    bool    show_org_fill
-    color   org_fill1
-    color   org_fill2
-    color   org_bg1
-    color   org_bg2
-    color   org_bg3
-    color   org_bg4
-    color   org_o
-    string  org_o_style
-    color   org_o_trace
-    string  org_o_trace_style
-    color   org_c
-    string  org_c_style
-    color   org_ce 
-    string  org_ce_style
-    bool    org_show_qdr
-    color   org_qdr
-    string  org_qdr_style
-    bool    org_extend
-    int     org_factor
-    string  hide_above
-    bool    show_labels
-    string  label_size
-    color   label_color
-    color   label_bg
-    int     max
-    int     buffer
-
-type OpenRange
-    float   close // close price of the ORG 
-    float   open // open price of the ORG 
-    int     close_time // time stamp for previous days 1614 close price 
-    int     open_time // time stamp for current days 930 open price
-    bool isPremium // check if ORG is Premium 
-    bool isDiscount // check if ORG is Discount 
-    bool validSize // is ORG > 30 and < 250
-    float fvg_o = na // 1FVG open price (top/bottom)
-    float fvg_c = na // 1FVG close price (top/bottom)
-    int   fvg_t = na // 1FVG 3rd candle timestamp
-    bool    is_Monday 
-    int     woy
-    line    line_open // line representing open price of ORG
-    line    line_open_trace // extending line for open price 
-    line    line_close // line presenting the close price of ORG
-    line    line_q1 // line representing 25% of ORG 
-    line    line_q2 // line representing 75% of ORG 
-    line    line_ce // line representing CE of ORG 
-    linefill lf_org1 // shaded fill area between 0%-25%
-    linefill lf_org2 // shaded fill area between 25%-50%
-    linefill lf_org3 // shaded fill area between 50%-75%
-    linefill lf_org4 // shaded fill area between 75%-100%
-    line    line_fvg_o // line for open price of 1FVG
-    line    line_fvg_c // line for close price of 1FVG 
-    line    line_fvg_ce // line for CE of 1FVG 
-    line    line_fvg_link // "vertical line" to show gap at EOD
-    label   label_fvg // 1FVG label for clarity 
-    label   label_org1 // label for 0% ORG
-    label   label_org2 // label for 25% ORG 
-    label   label_org3 // label for 50% ORG 
-    label   label_org4 // label for 75% ORG 
-    label   label_org5 // label for 100% ORG
-    linefill lf_fvg // shaded fill highlighting 1FVG
-    box     box_fill1 // box area to emphasize part of 1FVG (ex.,upper quadrant)
-    box     box_fill2 // box area to emphasize part of 1FVG (ex.,lower quadrant)
-
-var Settings settings = Settings.new()
-var OpenRange[] ranges = array.new<OpenRange>()
-
-settings.hide_above         := input.timeframe("15", "Hide above")
-settings.max                := input.int(5, "Limit to last X days", minval=1, maxval=100)
-settings.buffer             := input.int(10, "Extend to the right by", minval=1, maxval=100)
-
-settings.show_fvg           := input.bool(true, "1m FVG", group="First 1m FVG", inline="fvg")
-
-settings.fvg_o              := input.color(color.new(color.green,10), "Open                ", group="First 1m FVG", inline="fvg_o")
-settings.fvg_o_style        := input.string('····', '', options = ['⎯⎯⎯', '----', '····'], group="First 1m FVG", inline="fvg_o")
-
-settings.fvg_c              := input.color(color.new(color.green,10), "Close                ", group="First 1m FVG", inline="fvg_c")
-settings.fvg_c_style        := input.string('····', '', options = ['⎯⎯⎯', '----', '····'], group="First 1m FVG", inline="fvg_c")
-
-settings.fvg_ce             := input.color(color.new(color.green,10), "C.E.                 ", group="First 1m FVG", inline="fvg_ce")
-settings.fvg_ce_style       := input.string('····', '', options = ['⎯⎯⎯', '----', '····'], group="First 1m FVG", inline="fvg_ce")
-
-settings.fvg_link           := input.color(color.new(color.green,10), "Link                 ", group="First 1m FVG", inline="fvg_link")
-settings.fvg_link_style     := input.string('⎯⎯⎯', '', options = ['⎯⎯⎯', '----', '····'], group="First 1m FVG", inline="fvg_link")
-
-settings.fvg_show_label     := input.bool(true, "Label            ", group="First 1m FVG", inline="fvg_label")
-settings.fvg_label_size     := input.string(size.small, "", [size.auto, size.tiny, size.small, size.normal, size.large, size.huge], group="First 1m FVG", inline="fvg_label")
-settings.fvg_label_color    := input.color(color.gray, "", group="First 1m FVG", inline="fvg_label")
-settings.fvg_label_bg       := input.color(color.new(color.black, 100), "", group="First 1m FVG", inline="fvg_label")
-
-settings.show_fvg_bg        := input.bool(true, "Background       ", group="First 1m FVG", inline="fvg_bg")
-settings.fvg_bg             := input.color(color.new(color.green,95), "", group="First 1m FVG", inline="fvg_bg")
-
-settings.fvg_extend_monday  := input.bool(true, "Extend Monday's FVG", group="First 1m FVG")
-settings.fvg_extend_all     := input.bool(true, "Extend All", group="First 1m FVG")
-
-settings.show_openrange     := input.bool(true, "Open Range Gap", group="Open Range Gap", inline="org")
-settings.org_o              := input.color(color.new(color.gray,10), "Open                ", group="Open Range Gap", inline="org_o")
-settings.org_o_style        := input.string('⎯⎯⎯', '', options = ['⎯⎯⎯', '----', '····'], group="Open Range Gap", inline="org_o")
-
-settings.org_c              := input.color(color.new(color.gray,10), "Close                ", group="Open Range Gap", inline="org_c")
-settings.org_c_style        := input.string('⎯⎯⎯', '', options = ['⎯⎯⎯', '----', '····'], group="Open Range Gap", inline="org_c")
-
-settings.org_ce             := input.color(color.new(color.red,10), "C.E.                 ", group="Open Range Gap", inline="org_ce")
-settings.org_ce_style       := input.string('----', '', options = ['⎯⎯⎯', '----', '····'], group="Open Range Gap", inline="org_ce")
-
-settings.org_o_trace        := input.color(color.new(color.gray,10), "Trace Open          ", group="Open Range Gap", inline="org_o_trace")
-settings.org_o_trace_style  := input.string('⎯⎯⎯', '', options = ['⎯⎯⎯', '----', '····'], group="Open Range Gap", inline="org_o_trace")
-
-settings.org_show_qdr       := input.bool(true, "Quadrants       ", group="Open Range Gap", inline="org_qdr")
-settings.org_qdr            := input.color(color.new(color.gray,10), "", group="Open Range Gap", inline="org_qdr")
-settings.org_qdr_style      := input.string('····', '', options = ['⎯⎯⎯', '----', '····'], group="Open Range Gap", inline="org_qdr")
-
-settings.show_org_bg        := input.bool(true, "Background      ", group="Open Range Gap", inline="org_bg")
-settings.org_bg1            := input.color(color.new(color.blue,90), "", group="Open Range Gap", inline="org_bg")
-settings.org_bg2            := input.color(color.new(color.green,90), "", group="Open Range Gap", inline="org_bg")
-settings.org_bg3            := input.color(color.new(color.red,90), "", group="Open Range Gap", inline="org_bg")
-settings.org_bg4            := input.color(color.new(color.orange,90), "", group="Open Range Gap", inline="org_bg")
-
-settings.show_org_fill      := input.bool(true, "Fill             ", group="Open Range Gap", inline="org_fill")
-settings.org_fill1          := input.color(color.new(color.blue,95), "", group="Open Range Gap", inline="org_fill")
-settings.org_fill2          := input.color(color.new(color.blue,80), "", group="Open Range Gap", inline="org_fill")
-
-settings.org_extend         := input.bool(false, "Extend to end of day", group="Open Range Gap")
-
-settings.show_labels        := input.bool(true, "Labels", group="labels", inline="label")
-settings.label_size         := input.string(size.small, "", [size.auto, size.tiny, size.small, size.normal, size.large, size.huge], group="labels", inline="label")
-settings.label_color        := input.color(color.gray, "", group="labels", inline="label")
-settings.label_bg           := input.color(color.new(color.black, 100), "", group="labels", inline="label")
-
-settings.org_factor         := input.int(5, "Minimum Size", minval=1, tooltip="Hide Open Range Gaps smaller than this size.")
-
-
-int tc  = (time-time[1])*settings.buffer
-int ts  = (time-time[1])*3
-
-lineStyle(string style) =>
-    out = switch style
-        '----' => line.style_dashed
-        '····' => line.style_dotted
-        => line.style_solid
-    out
-
-validtimeframe() =>
-    n1 = timeframe.in_seconds()
-    n2 = timeframe.in_seconds(settings.hide_above)
-    n1 <= n2
-
-get_ltf_values(o, c, t) =>
-    float _o = na //  930 open price 
-    float _c = na //  930 close price 
-    int   _t = na
-    int index = na
-    if o.size() > 1
-        for i = 0 to o.size() - 1
-            if not na(o.get(i))
-                index := i
-                break
-        if not na(index)
-            if o.size() >= index
-                _o := o.get(index)
-            if c.size() >= index
-                _c := c.get(index)
-            if t.size() >= index
-                _t := t.get(index)
-    [_o, _c, _t]
-
-sessionStarted() =>
-    bool started = false
-    if timeframe.isseconds
-        insession = request.security(syminfo.tickerid, "1", (not na(time("1", "1614-0930", "America/New_York")) and na(time("1", "1614-0930", "America/New_York")[1])), lookahead=barmerge.lookahead_on)
-        started := insession
-    else
-        if (timeframe.isminutes and timeframe.multiplier == 1)
-            insession = (not na(time("1", "1614-0930", "America/New_York")) and na(time("1", "1614-0930", "America/New_York")[1]))
-            started := insession
-        if (timeframe.isminutes and timeframe.multiplier > 1)
-            insession = request.security_lower_tf(syminfo.tickerid, "1", (not na(time("1", "1614-0930", "America/New_York")) and na(time("1", "1614-0930", "America/New_York")[1])))
-            started := insession.includes(true)
-    started
-
-sessionEnded() =>
-    bool ended = false
-    if timeframe.isseconds
-        insession = request.security(syminfo.tickerid, "1", (na(time("1", "1614-0930", "America/New_York")) and not na(time("1", "1614-0930", "America/New_York")[1])), lookahead=barmerge.lookahead_on)
-        ended := insession
-    else
-        if (timeframe.isminutes and timeframe.multiplier == 1)
-            insession = (na(time("1", "1614-0930", "America/New_York")) and not na(time("1", "1614-0930", "America/New_York")[1]))
-            ended := insession
-        if (timeframe.isminutes and timeframe.multiplier > 1)
-            insession = request.security_lower_tf(syminfo.tickerid, "1", (na(time("1", "1614-0930", "America/New_York")) and not na(time("1", "1614-0930", "America/New_York")[1])))
-            ended := insession.includes(true)
-    ended
-
-test1mFVG(l1, h1, l3, h3) =>
-    (l1 > h3 or h1 < l3)
-
-// l1 // candle 1 wick low 
-// l2 // candle 2 wick low 
-// l3 // candle 3 wick low 
-// h1 // candle 1 wick high 
-// h2 // candle 2 wick high 
-// h3 // candle 3 wick high 
-// min1 // candle 1 body low 
-// max1 // candle 1 body high 
-// min2 // candle 2 body low 
-// max2 // candle 2 body high 
-// min3 // candle 3 body low 
-// max3 // candle 3 body high 
-// t3 // candle 3 time stamp 
-// o // top or bottom of 1FVG 
-// c // top or bottom of 1FVG
-
-get1mFVG(l1, l2, l3, h1, h2, h3, min1, max1, min2, max2, min3, max3, t3) =>
-    float o = na
-    float c = na
-    log.info("validate time")
-    if (hour(t3, "America/New_York") == 9 and minute(t3, "America/New_York") >= 31) or (hour(t3, "America/New_York") > 9 and hour(t3, "America/New_York")<= 12)
-        log.info("valid time")
-        if l1 > h3     
-            if min2 > max3
-                o := max3
-            else
-                o := h3
-            if min1 > max2
-                c := min1
-            else
-                c := l1
-        log.info("FVG: o: {0} c: {1} h1: {2} {3}", h1  , l3, max1 < max2, max1, c)
-
-        if h1 < l3
-
-            if max1 < min2
-                c := max1
-                log.info("assigned: {0}", c)
-            else
-                c := h1
-
-            if min3 > max2
-                o := min3
-            else
-                o := l3
-    [o, c, t3]
-
-firstFVG() =>
-    float fvg_o = na
-    float fvg_c = na 
-    int   fvg_t = na
-    
-    if ta.change(time("1"))
-        if timeframe.isseconds
-            [_o, _c, _t] = request.security(syminfo.tickerid, "1", get1mFVG(low[1], low[2], low[3], high[1], high[2], high[3], math.min(open[1], close[1]), math.max(open[1], close[1]), math.min(open[2], close[2]), math.max(open[2], close[2]), math.min(open[3], close[3]), math.max(open[3], close[3]), time[2]), lookahead = barmerge.lookahead_on)
-            fvg_o := _o
-            fvg_c := _c
-            fvg_t := _t
-        else
-            if (timeframe.isminutes and timeframe.multiplier == 1)
-                if barstate.isconfirmed
-                    [_o, _c, _t] = get1mFVG(low, low[1], low[2], high, high[1], high[2], math.min(open, close), math.max(open, close), math.min(open[1], close[1]), math.max(open[1], close[1]), math.min(open[2], close[2]), math.max(open[2], close[2]), time[1])
-                    fvg_o := _o
-                    fvg_c := _c
-                    fvg_t := _t
-            if (timeframe.isminutes and timeframe.multiplier >= 2)
-                [o, c, t] = request.security_lower_tf(syminfo.tickerid, "1", get1mFVG(low[1], low[2], low[3], high[1], high[2], high[3], math.min(open[1], close[1]), math.max(open[1], close[1]), math.min(open[2], close[2]), math.max(open[2], close[2]), math.min(open[3], close[3]), math.max(open[3], close[3]), time[2]))
-                [_o, _c, _t] = get_ltf_values(o, c, t)
-                fvg_o := _o
-                fvg_c := _c
-                fvg_t := time
-    [fvg_o, fvg_c, fvg_t]
-[fvg_o, fvg_c, fvg_t] = firstFVG() // global variables for 
-// 1FVG open (bottom/top), 1FVG close (bottom/top) and timestamp
-
-
-method clear(OpenRange this) =>
-    this.line_open.delete()
-    this.line_open_trace.delete()
-    this.line_close.delete()
-    this.line_q1.delete()
-    this.line_ce.delete()
-    this.line_q2.delete()
-    this.line_fvg_o.delete()
-    this.line_fvg_c.delete()
-    this.line_fvg_ce.delete()
-    this.line_fvg_link.delete()
-    this.lf_org1.delete()
-    this.lf_org2.delete()
-    this.lf_org3.delete()
-    this.lf_org4.delete()
-    this.lf_fvg.delete()
-    this.label_fvg.delete()
-    this.label_org1.delete()
-    this.label_org2.delete()
-    this.label_org3.delete()
-    this.label_org4.delete()
-    this.label_org5.delete()
-    this.box_fill1.delete()
-    this.box_fill2.delete()
-
-method terminateRange(OpenRange this) =>
-    //if (settings.org_extend and (hour(time, "America/New_York") == 16 and minute(time("1"), "America/New_York")== 14)) or (not settings.org_extend and (hour(time, "America/New_York") == 10 and minute(time, "America/New_York")== 0))
-    this.line_open.set_x2(time)
-    this.line_close.set_x2(time)
-    this.line_q1.set_x2(time)
-    this.line_ce.set_x2(time)
-    this.line_q2.set_x2(time)
-    this.label_org1.set_x(time)
-    this.label_org2.set_x(time)
-    this.label_org3.set_x(time)
-    this.label_org4.set_x(time)
-    this.label_org5.set_x(time)
-    this.box_fill1.delete()
-    this.box_fill2.delete()
-    this.label_org1.delete()
-    this.label_org2.delete()
-    this.label_org3.delete()
-    this.label_org4.delete()
-    this.label_org5.delete()
-
-method updateFill(OpenRange this) =>
-    
-    float org_size = math.abs(this.open - this.close)
-    // Is ORG Premium/Discount 
-    this.isPremium := this.open > this.close
-    this.isDiscount := this.open < this.close
-    // Is ORG greater than 30 points and less than 250 points
-    this.validSize := (org_size >= 30) and (org_size <= 250)
-
-    // Only update fills if ORG size is valid
-    if this.validSize
-        if this.open < this.close
-            if this.box_fill2.get_bottom() >= this.open and low < this.box_fill2.get_bottom()
-                this.box_fill2.set_bottom(math.max(low, this.open))
-                this.box_fill1.set_bottom(this.box_fill2.get_bottom())
-        else
-            if this.box_fill2.get_bottom() <= this.open and high > this.box_fill2.get_bottom()
-                this.box_fill2.set_bottom(math.min(high, this.open))
-                this.box_fill1.set_bottom(this.box_fill2.get_bottom())
-    // else do nothing (skip and shut down algorithm)
-
-// ORG + 1FVG visual decorations and drawing logic 
-method render(OpenRange[] this) =>
-    if this.size() > 0
-        OpenRange org = this.first()
-        if not na(org.close)
-            if settings.show_openrange
-                if math.abs(org.open - org.close) > settings.org_factor
-                    if na(org.line_open) 
-                        // Create 0%, 25%, 50%, 75%, 100% ORG quadrants 
-                        float q  = math.abs(org.open - org.close)/4
-                        float q1 = org.close > org.open ? org.close-q        : org.open-q
-                        float q2 = org.close > org.open ? org.close-(q*2)    : org.open-(q*2)
-                        float q3 = org.close > org.open ? org.close-(q*3)    : org.open-(q*3)
-                        // Draw lines at ORG open, CE and close quadrant levels 
-                        org.line_open  := line.new(org.close_time, org.open,     time+tc, org.open,     xloc=xloc.bar_time, color=settings.org_o, style=lineStyle(settings.org_o_style))
-                        org.line_ce    := line.new(org.close_time, q2,           time+tc, q2,           xloc=xloc.bar_time, color=settings.org_ce, style=lineStyle(settings.org_ce_style))
-                        org.line_close := line.new(org.close_time, org.close,    time+tc, org.close,    xloc=xloc.bar_time, color=settings.org_c, style=lineStyle(settings.org_c_style))
-                        if settings.org_show_qdr
-                            org.line_q1    := line.new(org.close_time, q1,           time+tc, q1,           xloc=xloc.bar_time, color=settings.org_qdr, style=lineStyle(settings.org_qdr_style))
-                            org.line_q2    := line.new(org.close_time, q3,           time+tc, q3,           xloc=xloc.bar_time, color=settings.org_qdr, style=lineStyle(settings.org_qdr_style))
-                        if settings.show_org_bg
-                            if org.open < org.close
-                                if settings.org_show_qdr
-                                    org.lf_org1 := linefill.new(org.line_open, org.line_q2, color=settings.org_bg1)                    
-                                    org.lf_org2 := linefill.new(org.line_q2, org.line_ce, color=settings.org_bg2)
-                                    org.lf_org3 := linefill.new(org.line_ce, org.line_q1, color=settings.org_bg3)
-                                    org.lf_org4 := linefill.new(org.line_q1, org.line_close, color=settings.org_bg4)
-                                else
-                                    org.lf_org1 := linefill.new(org.line_open, org.line_ce, color=settings.org_bg1)                    
-                                    org.lf_org2 := linefill.new(org.line_ce, org.line_close, color=settings.org_bg2)
-                            else
-                                if settings.org_show_qdr
-                                    org.lf_org1 := linefill.new(org.line_open, org.line_q1, color=settings.org_bg1)                    
-                                    org.lf_org2 := linefill.new(org.line_q1, org.line_ce, color=settings.org_bg2)
-                                    org.lf_org3 := linefill.new(org.line_ce, org.line_q2, color=settings.org_bg3)
-                                    org.lf_org4 := linefill.new(org.line_q2, org.line_close, color=settings.org_bg4)
-                                else
-                                    org.lf_org1 := linefill.new(org.line_open, org.line_ce, color=settings.org_bg1)                    
-                                    org.lf_org2 := linefill.new(org.line_ce, org.line_close, color=settings.org_bg2)
-                        if settings.show_org_fill
-                            org.box_fill1   := box.new(time+tc, org.open, time+tc-ts, org.close, xloc=xloc.bar_time, border_color=settings.org_fill1, bgcolor=settings.org_fill1)
-                            org.box_fill2   := box.new(time+tc, org.close, time+tc-ts, org.close, xloc=xloc.bar_time, border_color=settings.org_fill2, bgcolor=settings.org_fill2)
-                        if settings.show_labels
-                            //org.label_org1 := label.new(time+tc, org.open, str.tostring(org.open, "#,##0.00") + " (open)", xloc=xloc.bar_time, textcolor=settings.label_color, color=settings.label_bg, size=settings.label_size, style=label.style_label_left)
-                            if settings.org_show_qdr
-                                if org.open < org.close
-                                    org.label_org2 := label.new(time+tc, q1, str.tostring(q1, "#,##0.00") + " (1/4)", xloc=xloc.bar_time, textcolor=settings.label_color, color=settings.label_bg, size=settings.label_size, style=label.style_label_left)
-                                    org.label_org4 := label.new(time+tc, q3, str.tostring(q3, "#,##0.00") + " (3/4)", xloc=xloc.bar_time, textcolor=settings.label_color, color=settings.label_bg, size=settings.label_size, style=label.style_label_left)
-                                else
-                                    org.label_org2 := label.new(time+tc, q1, str.tostring(q1, "#,##0.00") + " (3/4)", xloc=xloc.bar_time, textcolor=settings.label_color, color=settings.label_bg, size=settings.label_size, style=label.style_label_left)
-                                    org.label_org4 := label.new(time+tc, q3, str.tostring(q3, "#,##0.00") + " (1/4)", xloc=xloc.bar_time, textcolor=settings.label_color, color=settings.label_bg, size=settings.label_size, style=label.style_label_left)
-                            org.label_org3 := label.new(time+tc, q2, str.tostring(q2, "#,##0.00") + " (1/2)",  xloc=xloc.bar_time, textcolor=settings.label_color, color=settings.label_bg, size=settings.label_size, style=label.style_label_left)
-                            org.label_org5 := label.new(time+tc, org.close, str.tostring(org.close, "#,##0.00") + " (close)", xloc=xloc.bar_time, textcolor=settings.label_color, color=settings.label_bg, size=settings.label_size, style=label.style_label_left)
-                    else
-                        if settings.org_extend or (not settings.org_extend and (hour(time, "America/New_York") < 10 or (hour(time, "America/New_York") == 10 and minute(time, "America/New_York")== 0)))
-                            org.line_open.set_x2(time+tc)
-                            org.line_open_trace.set_x2(org.close_time)
-                            org.line_close.set_x2(time+tc)
-                            org.line_q1.set_x2(time+tc)
-                            org.line_ce.set_x2(time+tc)
-                            org.line_q2.set_x2(time+tc)
-                            org.label_org1.set_x(time+tc)
-                            org.label_org2.set_x(time+tc)
-                            org.label_org3.set_x(time+tc)
-                            org.label_org4.set_x(time+tc)
-                            org.label_org5.set_x(time+tc)
-                            org.box_fill1.set_right(time+tc)                        
-                            org.box_fill1.set_left(time+tc-ts)
-                            org.box_fill2.set_right(time+tc)                        
-                            org.box_fill2.set_left(time+tc-ts)
-                            org.updateFill()
-            if not na(org.line_fvg_o)
-                org.line_fvg_o.set_x2(time+tc)
-                org.line_fvg_c.set_x2(time+tc)
-                org.line_fvg_ce.set_x2(time+tc)
-                org.line_fvg_link.set_x1(time+tc)
-                org.line_fvg_link.set_x2(time+tc)
-                org.label_fvg.set_x(time+tc)
-        else
-            if not na(org.open) and settings.show_openrange // we have open only, we can draw traceline
-                if na(org.line_open_trace)
-                    if settings.show_labels
-                        org.label_org1 := label.new(time+tc, org.open, str.tostring(org.open, "#,##0.00") + " (open)", xloc=xloc.bar_time, textcolor=settings.label_color, color=settings.label_bg, size=settings.label_size, style=label.style_label_left)
-                    org.line_open_trace := line.new(org.open_time, org.open,     time+tc, org.open,     xloc=xloc.bar_time, color=settings.org_o_trace, style=lineStyle(settings.org_o_trace_style))
-                else
-                    org.line_open_trace.set_x2(time+tc)
-                    org.label_org1.set_x(time+tc)
-        if settings.fvg_extend_monday or settings.fvg_extend_all
-            for org in this 
-                if (settings.fvg_extend_monday and org.is_Monday and org.woy == weekofyear(time, "America/New_York")) or (settings.fvg_extend_all and org.woy == weekofyear(time_tradingday, "America/New_York"))
-                    if not na(org.line_fvg_o)
-                        org.line_fvg_o.set_x2(time+tc)
-                        org.line_fvg_c.set_x2(time+tc)
-                        org.line_fvg_ce.set_x2(time+tc)
-                        org.line_fvg_link.set_x1(time+tc)
-                        org.line_fvg_link.set_x2(time+tc)
-                        org.label_fvg.set_x(time+tc)
-        if (not settings.org_extend and (hour(time, "America/New_York") == 10 and minute(time, "America/New_York")== 0))
-            org.terminateRange()        
-    this
-
-if validtimeframe()
-    if sessionStarted()
-        // starting a new ORG 
-        if settings.org_extend
-            if ranges.size() > 0
-                OpenRange old = ranges.first()
-                old.terminateRange()
-
-        OpenRange org   = OpenRange.new()
-        org.open        := close
-        org.open_time   := time
-        ranges.unshift(org)
-
-    if sessionEnded()
-        if ranges.size() >0
-            // closing the ORG
-            OpenRange org = ranges.first()
-            org.close      := open
-            org.close_time := time
-
-    if settings.show_fvg
-        if ranges.size() > 0
-            OpenRange org = ranges.first()
-            // main 1FVG logic for grabbing 1FVG open, CE and close 
-            if na(org.line_fvg_o)
-                [o, c, t] = firstFVG()
-                if not na(o)
-                    org.is_Monday       := dayofweek(time, "America/New_York") == dayofweek.monday
-                    org.woy             := weekofyear(time, "America/New_York")
-                    org.line_fvg_o     := line.new(t, o, (t+tc), o, xloc=xloc.bar_time, color=settings.fvg_o, style=lineStyle(settings.fvg_o_style))
-                    org.line_fvg_c     := line.new(t, c, (t+tc), c, xloc=xloc.bar_time, color=settings.fvg_c, style=lineStyle(settings.fvg_c_style))
-                    org.line_fvg_ce    := line.new(t, (o+c)/2, (t+tc), (o+c)/2, xloc=xloc.bar_time, color=settings.fvg_ce, style=lineStyle(settings.fvg_ce_style))
-                    org.line_fvg_link  := line.new((t+tc), o, (t+tc), c, xloc=xloc.bar_time, color=settings.fvg_link, style=lineStyle(settings.fvg_link_style), width=3)
-                    if settings.fvg_show_label
-                        org.label_fvg      := label.new(time+tc, (o+c)/2, "1st FVG",  xloc=xloc.bar_time, textcolor=settings.fvg_label_color, color=settings.fvg_label_bg, size=settings.fvg_label_size, style=label.style_label_left)
-                    if settings.show_fvg_bg
-                        org.lf_fvg         := linefill.new(org.line_fvg_o, org.line_fvg_c, settings.fvg_bg)
-    if ranges.size() > settings.max
-        OpenRange temp = ranges.pop()
-        temp.clear()
-
-    ranges.render()
+//@version=5 
+strategy("NQ1! 1m Liquidity + 1FVG Strategy", overlay=true, margin_long=100, margin_short=100)
 
 //------------------------------------------------------------------------------
 //BUY SIDE AND SELL SIDE LIQUIDITY CODE BELOW 
 //-----------------------------------------------------------------------------{
-
 
 //------------------------------------------------------------------------------
 //Settings
@@ -536,8 +25,8 @@ cLQV_B = input.color (color.new(#4934eb,  0), '', inline = 'void', group = liqGr
 cLQV_S = input.color (color.new(#eb3434,  0), 'Bearish', inline = 'void', group = liqGrp)
 lqText = input.bool (false, 'Label', inline = 'void', group = liqGrp)
 
-mode   = input.string('Present', title = 'Mode', options =['Present', 'Historical'], inline = 'MOD', group = liqGrp)
-visLiq = input.int   (3, '    # Visible Levels', minval = 1, maxval = 50, inline = 'MOD', group = liqGrp)
+mode   = input.string('Historical', title = 'Mode', options =['Present', 'Historical'], inline = 'MOD', group = liqGrp)
+visLiq = input.int   (10, '    # Visible Levels', minval = 1, maxval = 50, inline = 'MOD', group = liqGrp)
 
 //-----------------------------------------------------------------------------}
 //General Calculations
@@ -545,48 +34,23 @@ visLiq = input.int   (3, '    # Visible Levels', minval = 1, maxval = 50, in
 maxSize = 50 // how much liquidity will be shown or stored 
 atr     = ta.atr(10)
 atr200  = ta.atr(200)
-// only draw if we are within 500 bars from current candle 
-per     = mode == 'Present' ? last_bar_index - bar_index <=  500 : true
+// only draw liquidity levels (remove time restriction to keep them visible)
+per     = true  // Always show liquidity levels
 
 //-----------------------------------------------------------------------------}
 //User Defined Types
 //-----------------------------------------------------------------------------{
-// @type        used to store pivot high/low data 
-//
-// @field d     (array<int>) The array where the trend direction is to be maintained
-// @field x     (array<int>) The array where the bar index value of pivot high/low is to be maintained
-// @field y     (array<float>) The array where the price value of pivot high/low is to be maintained
-
 type ZZ 
     int   [] d // tracks DIRECTION at each pivot 
     int   [] x // bar index based on TIME on chart 
     float [] y // stores the PRICE at each pivot 
 
-// @type        bar properties with their values 
-//
-// @field o     (float) open price of the bar
-// @field h     (float) high price of the bar
-// @field l     (float) low price of the bar
-// @field c     (float) close price of the bar
-// @field i     (int) index of the bar
-
-// OHLC of candle stick 
 type bar
     float o = open
     float h = high
     float l = low
     float c = close
     int   i = bar_index
-
-// @type        liquidity object definition 
-//
-// @field bx    (box) box maitaing the liquity level margin extreme levels
-// @field bxz   (box) box maitaing the liquity zone margin extreme levels
-// @field bxt   (box) box maitaing the labels
-// @field brZ   (bool) mainains broken zone status
-// @field brL   (bool) mainains broken level status
-// @field ln    (line) maitaing the liquity level line
-// @field lne   (line) maitaing the liquity extended level line
 
 type liq
     box   bx 
@@ -600,7 +64,6 @@ type liq
 //-----------------------------------------------------------------------------}
 //Variables
 //-----------------------------------------------------------------------------{
-// Stores recent directional highs and lows to identify liquidity 
 var ZZ aZZ = ZZ.new(
  array.new <int>  (maxSize,  0), 
  array.new <int>  (maxSize,  0), 
@@ -609,9 +72,7 @@ var ZZ aZZ = ZZ.new(
 
 bar b = bar.new()
 
-// buyside liquidity from highs array
 var liq[] b_liq_B = array.new<liq> (1, liq.new(box(na), box(na), box(na), false, false, line(na), line(na)))
-// sell side liquidity from lows array 
 var liq[] b_liq_S = array.new<liq> (1, liq.new(box(na), box(na), box(na), false, false, line(na), line(na)))
 
 var b_liq_V = array.new_box()
@@ -621,72 +82,51 @@ var int dir = na, var int x1 = na, var float y1 = na, var int x2 = na, var float
 //-----------------------------------------------------------------------------}
 //Functions/methods
 //-----------------------------------------------------------------------------{
-// @function        maintains arrays 
-//                     it prepends a `value` to the arrays and removes their oldest element at last position
-// @param aZZ       (UDT<array<int>, array<int>, array<float>>) The UDT obejct of arrays
-// @param _d        (array<int>) The array where the trend direction is maintained
-// @param _x        (array<int>) The array where the bar index value of pivot high/low is maintained
-// @param _y        (array<float>) The array where the price value of pivot high/low is maintained
-//
-// @returns         none
-
 method in_out(ZZ aZZ, int _d, int _x, float _y) =>
-    // stores latest new pivot info into the front of each array 
     aZZ.d.unshift(_d), aZZ.x.unshift(_x), aZZ.y.unshift(_y), aZZ.d.pop(), aZZ.x.pop(), aZZ.y.pop()
 
-
-// @function        (build-in) sets the maximum number of bars that is available for historical reference 
-                    
 max_bars_back(time, 1000)
 
 //-----------------------------------------------------------------------------}
-//Calculations
+//Liquidity Calculations
 //-----------------------------------------------------------------------------{
-x2 := b.i - 1 // previous bar index 
-ph  = ta.pivothigh(liqLen, 1) // look for high in last liqLen bars 
-pl  = ta.pivotlow (liqLen, 1) // look for low in last liqLen bars
+x2 := b.i - 1 
+ph  = ta.pivothigh(liqLen, 1) 
+pl  = ta.pivotlow (liqLen, 1) 
 
-// if new liquidity high detected 
 if ph   
-    dir := aZZ.d.get(0) // direction 
-    x1  := aZZ.x.get(0) // time 
-    y1  := aZZ.y.get(0) // price 
-    y2  := nz(b.h[1]) // set previous bar price as high price 
+    dir := aZZ.d.get(0) 
+    x1  := aZZ.x.get(0) 
+    y1  := aZZ.y.get(0) 
+    y2  := nz(b.h[1]) 
 
-    if dir < 1 // if previous direction is not up 
+    if dir < 1 
         aZZ.in_out(1, x2, y2)
-    else // if previous direction was up and current high is higher than
-        // what is store, update to new higher pivot 
+    else 
         if dir == 1 and ph > y1 
             aZZ.x.set(0, x2), aZZ.y.set(0, y2)
     
     if per
-        count = 0 // counts how many pivot match conditions 
-        st_P  = 0. // starting liquidity price 
-        st_B  = 0 // starting bar index (time)
-        minP  = 0. // bounds on liquidity prices 
-        maxP  = 10e6 // bounds on liquidity prices 
+        count = 0 
+        st_P  = 0. 
+        st_B  = 0 
+        minP  = 0. 
+        maxP  = 10e6 
 
-        // loop through liquidity array to find relevant liquidity 
-        // near current liquidity high 
         for i = 0 to maxSize - 1
-            // if liquidity price is too far above current high, break loop 
             if aZZ.d.get(i) ==  1 
                 if aZZ.y.get(i) > ph + (atr / liqMar)
                     break
-                // if liquidity price is within range, collect stats 
                 else
                     if aZZ.y.get(i) > ph - (atr / liqMar) and aZZ.y.get(i) < ph + (atr / liqMar)
                         count += 1
-                        st_B := aZZ.x.get(i) // update liquidity time/price 
-                        st_P := aZZ.y.get(i) // update liquidity time/price
+                        st_B := aZZ.x.get(i) 
+                        st_P := aZZ.y.get(i) 
                         if aZZ.y.get(i) > minP
                             minP := aZZ.y.get(i)
                         if aZZ.y.get(i) < maxP 
                             maxP := aZZ.y.get(i)
 
-        // if at least 3 liquidity pivots meet criteria, 
-        // update/add a buyside liquidity zone 
         if count > 2
             getB = b_liq_B.get(0)
 
@@ -701,11 +141,9 @@ if ph
                    box.new(st_B, st_P, b.i + 10, st_P, text = 'Buyside liquidity', text_size = size.tiny, text_halign = text.align_left, text_valign = text.align_bottom, text_color = color.new(cLIQ_B, 25), bgcolor = color(na), border_color = color(na)),
                    false, 
                    false,
-                   line.new(st_B   , st_P, b.i - 1, st_P, color = color.new(cLIQ_B, 0)),
-                   line.new(b.i - 1, st_P, na     , st_P, color = color.new(cLIQ_B, 0), style = line.style_dotted))
+                   line.new(st_B   , st_P, bar_index + 50, st_P, color = color.new(cLIQ_B, 0)),
+                   line.new(bar_index, st_P, bar_index + 200, st_P, color = color.new(cLIQ_B, 0), style = line.style_dotted))
                  )
-
-                alert('buyside liquidity level detected/updated for ' + syminfo.ticker)
 
             if b_liq_B.size() > visLiq
                 getLast = b_liq_B.pop()
@@ -715,23 +153,18 @@ if ph
                 getLast.ln.delete()
                 getLast.lne.delete()               
 
-// if pivot low / liquidity detected 
 if pl
-    dir := aZZ.d.get (0)  // last known liquidity direction 
-    x1  := aZZ.x.get (0) // last liquidity index (time)
-    y1  := aZZ.y.get (0)  // last liquidity price 
-    y2  := nz(b.l[1]) // previous bars low price 
+    dir := aZZ.d.get (0)  
+    x1  := aZZ.x.get (0) 
+    y1  := aZZ.y.get (0)  
+    y2  := nz(b.l[1]) 
     
-    // if direction was not down 
     if dir > -1
         aZZ.in_out(-1, x2, y2)
-    // if direction was down and current pivot is lower than stored 
-    // update info
     else
         if dir == -1 and pl < y1 
             aZZ.x.set(0, x2), aZZ.y.set(0, y2)
     
-    // if present mode is true, scan pivot arrays for clusters 
     if per
         count = 0
         st_P  = 0.
@@ -739,7 +172,6 @@ if pl
         minP  = 0.
         maxP  = 10e6
 
-        // loop through pivot lowers in aZZ to find sell side liquidity 
         for i = 0 to maxSize - 1
             if aZZ.d.get(i) == -1 
                 if aZZ.y.get(i) < pl - (atr / liqMar)
@@ -754,8 +186,6 @@ if pl
                         if aZZ.y.get(i) < maxP 
                             maxP := aZZ.y.get(i)
 
-        // if enough cluster pivots (more than 2) are found 
-        // update or create sell side liquidity box 
         if count > 2
             getB = b_liq_S.get(0)
 
@@ -770,11 +200,9 @@ if pl
                    box.new(st_B, st_P, b.i + 10, st_P, text = 'Sellside liquidity', text_size = size.tiny, text_halign = text.align_left, text_valign = text.align_top, text_color = color.new(cLIQ_S, 25), bgcolor=color(na), border_color=color(na)),
                    false,
                    false,
-                   line.new(st_B   , st_P, b.i - 1, st_P, color = color.new(cLIQ_S, 0)),
-                   line.new(b.i - 1, st_P, na     , st_P, color = color.new(cLIQ_S, 0), style = line.style_dotted))
+                   line.new(st_B   , st_P, bar_index + 50, st_P, color = color.new(cLIQ_S, 0)),
+                   line.new(bar_index, st_P, bar_index + 200, st_P, color = color.new(cLIQ_S, 0), style = line.style_dotted))
                  )  
-
-                alert('sellside liquidity level detected/updated for ' + syminfo.ticker)
 
             if b_liq_S.size() > visLiq
                 getLast = b_liq_S.pop()
@@ -784,7 +212,7 @@ if pl
                 getLast.ln.delete()            
                 getLast.lne.delete()               
 
-
+// Update liquidity breach tracking
 for i = 0 to b_liq_B.size() - 1
     x = b_liq_B.get(i)
     
@@ -794,7 +222,6 @@ for i = 0 to b_liq_B.size() - 1
         if b.h > x.bx.get_top()
             x.brL := true
             x.brZ := true
-            alert('buyside liquidity level breached for ' + syminfo.ticker)
 
             x.bxz.set_lefttop(b.i - 1, math.min(x.ln.get_y1() + marBuy * (atr), b.h))
             x.bxz.set_rightbottom(b.i + 1, x.ln.get_y1())
@@ -818,7 +245,6 @@ for i = 0 to b_liq_S.size() - 1
         if b.l < x.bx.get_bottom()
             x.brL := true
             x.brZ := true
-            alert('sellside liquidity level breached for ' + syminfo.ticker)
 
             x.bxz.set_lefttop(b.i - 1, x.ln.get_y1())
             x.bxz.set_rightbottom(b.i + 1, math.max(x.ln.get_y1() - marSel * (atr), b.l))
@@ -832,224 +258,217 @@ for i = 0 to b_liq_S.size() - 1
         else
             x.brZ := false
 
-if lqVoid and per
-    bull = b.l - b.h[2] > atr200 and b.l > b.h[2] and b.c[1] > b.h[2]
-    bear = b.l[2] - b.h > atr200 and b.h < b.l[2] and b.c[1] < b.l[2]
-
-    if bull 
-        l  = 13
-        if bull[1] 
-            st = math.abs(b.l - b.l[1]) / l
-            for i = 0 to l - 1
-                array.push(b_liq_V, box.new(b.i - 2, b.l[1] + i * st, b.i, b.l[1] + (i + 1) * st, border_color = na, bgcolor = color.new(cLQV_B, 90) ))
-        else   
-            st = math.abs(b.l - b.h[2]) / l
-            for i = 0 to l - 1
-                if lqText and i == 0
-                    array.push(b_liq_V, box.new(b.i - 2, b.h[2] + i * st, b.i, b.h[2] + (i + 1) * st, text = 'Liquidity Void   ', text_size = size.tiny, text_halign = text.align_right, text_valign = text.align_bottom, text_color = na, border_color = na, bgcolor = color.new(cLQV_B, 90) ))
-                else
-                    array.push(b_liq_V, box.new(b.i - 2, b.h[2] + i * st, b.i, b.h[2] + (i + 1) * st, border_color = na, bgcolor = color.new(cLQV_B, 90) ))
-
-    if bear
-        l  = 13
-        if bear[1]
-            st = math.abs(b.h[1] - b.h) / l
-            for i = 0 to l - 1
-                array.push(b_liq_V, box.new(b.i - 2, b.h + i * st, b.i, b.h + (i + 1) * st, border_color = na, bgcolor = color.new(cLQV_S, 90) ))
-        else
-            st = math.abs(b.l[2] - b.h) / l
-            for i = 0 to l - 1
-                if lqText and i == l - 1
-                    array.push(b_liq_V, box.new(b.i - 2, b.h + i * st, b.i, b.h + (i + 1) * st, text = 'Liquidity Void   ', text_size = size.tiny, text_halign = text.align_right, text_valign = text.align_top, text_color = na, border_color = na, bgcolor = color.new(cLQV_S, 90) ))
-                else
-                    array.push(b_liq_V, box.new(b.i - 2, b.h + i * st, b.i, b.h + (i + 1) * st, border_color = na, bgcolor = color.new(cLQV_S, 90) ))
-
-if b_liq_V.size() > 0
-    qt = b_liq_V.size()
-    for bn = qt - 1 to 0
-        if bn < b_liq_V.size()
-            cb = b_liq_V.get(bn)
-            ba = math.avg(cb.get_bottom(), cb.get_top())
-
-            if math.sign(b.c[1] - ba) != math.sign(b.c - ba) or math.sign(b.c[1] - ba) != math.sign(b.l - ba) or math.sign(b.c[1] - ba) != math.sign(b.h - ba)
-                b_liq_V.remove(bn)
-            else
-                cb.set_right(b.i + 1)
-
-                if b.i - cb.get_left() > 21
-                    cb.set_text_color(color.new(color.gray, 25))
-
-
 //------------------------------------------------------------------------------
-//TRADING LOGIC BELOW 
+//1FVG DETECTION CODE
 //-----------------------------------------------------------------------------{
 
+// Function to detect 1FVG
+get1mFVG() =>
+    float fvg_top = na
+    float fvg_bottom = na
+    float fvg_high_c1 = na
+    float fvg_low_c1 = na
+    float fvg_high_c3 = na
+    float fvg_low_c3 = na
+    bool is_bullish_fvg = false
+    bool is_bearish_fvg = false
+    
+    // Check for bullish FVG (gap up) - candle 1 low > candle 3 high
+    if low > high[2]
+        is_bullish_fvg := true
+        fvg_bottom := high[2]  // Bottom of gap
+        fvg_top := low         // Top of gap
+        fvg_high_c1 := high    // Candle 1 wick high
+        fvg_low_c1 := low      // Candle 1 wick low  
+        fvg_high_c3 := high[2] // Candle 3 wick high
+        fvg_low_c3 := low[2]   // Candle 3 wick low
+    
+    // Check for bearish FVG (gap down) - candle 1 high < candle 3 low
+    if high < low[2]
+        is_bearish_fvg := true
+        fvg_top := low[2]      // Top of gap
+        fvg_bottom := high     // Bottom of gap
+        fvg_high_c1 := high    // Candle 1 wick high
+        fvg_low_c1 := low      // Candle 1 wick low
+        fvg_high_c3 := high[2] // Candle 3 wick high
+        fvg_low_c3 := low[2]   // Candle 3 wick low
+    
+    [fvg_top, fvg_bottom, fvg_high_c1, fvg_low_c1, fvg_high_c3, fvg_low_c3, is_bullish_fvg, is_bearish_fvg]
+
+// Draw 1FVG levels
+var line fvg_top_line = na
+var line fvg_bottom_line = na
+var line fvg_ce_line = na
+var box fvg_box = na
 
 //------------------------------------------------------------------------------
 //TRADING LOGIC
 //-----------------------------------------------------------------------------{
 
-// Trading state variables
-var bool trade_entered = false
-var bool liquidity_swept = false
-var float entry_price = na
-var float stop_loss = na
-var float take_profit = na
-var bool algorithm_closed = false
-var float nearest_bsl = na
-var float nearest_ssl = na
-var bool limit_order_placed = false
-var float limit_order_price = na
+// Trading session management - simplified for 1-minute timeframe
+is_market_session = time(timeframe.period, "0930-1615", "America/New_York")
+is_after_930 = hour(time, "America/New_York") >= 9 and minute(time, "America/New_York") >= 30
+session_change = ta.change(time("D"))
 
-// Helper function to find nearest buy side liquidity
-getNearestBSL() =>
-    float nearest = na
-    float current_price = close
-    float min_distance = 999999.0
-    
-    if b_liq_B.size() > 0
-        for i = 0 to b_liq_B.size() - 1
-            liq_level = b_liq_B.get(i)
-            if not liq_level.brL // Only consider unbroken liquidity
-                distance = math.abs(liq_level.ln.get_y1() - current_price)
-                if distance < min_distance
-                    min_distance := distance
-                    nearest := liq_level.ln.get_y1()
-    nearest
+// Session reset variables
+var bool session_started = false
+var bool first_fvg_found = false
+var bool sellside_swept_first = false
+var bool buyside_swept_first = false
+var bool looking_for_long = false
+var bool looking_for_short = false
 
-// Helper function to find nearest sell side liquidity
-getNearestSSL() =>
-    float nearest = na
-    float current_price = close
-    float min_distance = 999999.0
+// 1FVG variables
+var float first_fvg_top = na
+var float first_fvg_bottom = na
+var float first_fvg_c1_high = na
+var float first_fvg_c1_low = na  
+var float first_fvg_c3_high = na
+var float first_fvg_c3_low = na
+var bool first_fvg_bullish = false
+
+// Session management - reset on new day
+if session_change
+    session_started := false
+    first_fvg_found := false
+    sellside_swept_first := false
+    buyside_swept_first := false
+    looking_for_long := false
+    looking_for_short := false
+    first_fvg_top := na
+    first_fvg_bottom := na
+    first_fvg_c1_high := na
+    first_fvg_c1_low := na
+    first_fvg_c3_high := na
+    first_fvg_c3_low := na
+    first_fvg_bullish := false
+
+// Start session tracking
+if is_market_session and not session_started
+    session_started := true
+
+// Detect first FVG of the session
+if session_started and not first_fvg_found and is_after_930
+    [fvg_top, fvg_bottom, c1_high, c1_low, c3_high, c3_low, is_bull, is_bear] = get1mFVG()
     
+    if not na(fvg_top) and not na(fvg_bottom)
+        first_fvg_found := true
+        first_fvg_top := fvg_top
+        first_fvg_bottom := fvg_bottom
+        first_fvg_c1_high := c1_high
+        first_fvg_c1_low := c1_low
+        first_fvg_c3_high := c3_high
+        first_fvg_c3_low := c3_low
+        first_fvg_bullish := is_bull
+        
+        // Draw the FVG
+        fvg_top_line := line.new(bar_index, fvg_top, bar_index + 50, fvg_top, color=color.green, width=2, style=line.style_solid)
+        fvg_bottom_line := line.new(bar_index, fvg_bottom, bar_index + 50, fvg_bottom, color=color.red, width=2, style=line.style_solid)
+        fvg_ce_line := line.new(bar_index, (fvg_top + fvg_bottom)/2, bar_index + 50, (fvg_top + fvg_bottom)/2, color=color.yellow, width=1, style=line.style_dashed)
+        fvg_box := box.new(bar_index, fvg_top, bar_index + 50, fvg_bottom, bgcolor=color.new(color.blue, 90), border_color=color.blue)
+
+// Update FVG lines
+if not na(fvg_top_line)
+    line.set_x2(fvg_top_line, bar_index + 10)
+    line.set_x2(fvg_bottom_line, bar_index + 10)
+    line.set_x2(fvg_ce_line, bar_index + 10)
+    box.set_right(fvg_box, bar_index + 10)
+
+// Check for liquidity sweeps - improved detection
+sellside_swept_this_bar = false
+buyside_swept_this_bar = false
+
+// Always check for liquidity sweeps after 9:30, even if FVG isn't found yet
+if session_started and is_after_930 and not sellside_swept_first and not buyside_swept_first
+    
+    // Check for sellside liquidity sweep - look for any breached levels
     if b_liq_S.size() > 0
         for i = 0 to b_liq_S.size() - 1
             liq_level = b_liq_S.get(i)
-            if not liq_level.brL // Only consider unbroken liquidity
-                distance = math.abs(liq_level.ln.get_y1() - current_price)
-                if distance < min_distance
-                    min_distance := distance
-                    nearest := liq_level.ln.get_y1()
-    nearest
-
-// Check if current time is 11 AM EST or later
-isAlgorithmClosed() =>
-    current_hour = hour(time, "America/New_York")
-    current_hour >= 11
-
-// Main trading logic
-if validtimeframe() and not algorithm_closed
+            // Check if liquidity was breached
+            if liq_level.brL
+                sellside_swept_this_bar := true
+                break
     
-    // Close algorithm at 11 AM EST if no trade entered
-    if isAlgorithmClosed() and not trade_entered
-        algorithm_closed := true
+    // Check for buyside liquidity sweep - look for any breached levels
+    if b_liq_B.size() > 0
+        for i = 0 to b_liq_B.size() - 1
+            liq_level = b_liq_B.get(i)
+            // Check if liquidity was breached
+            if liq_level.brL
+                buyside_swept_this_bar := true
+                break
     
-    if not algorithm_closed and ranges.size() > 0
-        current_org = ranges.first()
+    // Determine trade direction based on first sweep detected
+    if sellside_swept_this_bar and not sellside_swept_first and not buyside_swept_first
+        sellside_swept_first := true
+        looking_for_long := true
         
-        // Only proceed if we have a complete ORG with valid size
-        if not na(current_org.close) and not na(current_org.open) and current_org.validSize
-            
-            // PREMIUM ORG LOGIC
-            if current_org.isPremium and not trade_entered
-                
-                // Find nearest BSL if not already found
-                if na(nearest_bsl)
-                    nearest_bsl := getNearestBSL()
-                
-                // Check if BSL has been swept
-                if not na(nearest_bsl) and not liquidity_swept
-                    if high > nearest_bsl
-                        liquidity_swept := true
-                
-                // Premium entry logic after BSL sweep
-                if liquidity_swept and not na(current_org.fvg_o) and not na(current_org.fvg_c)
-                    
-                    // Get FVG candle levels (assuming fvg_o is top, fvg_c is bottom for premium)
-                    fvg_candle1_high = math.max(current_org.fvg_o, current_org.fvg_c)
-                    fvg_candle3_high = math.min(current_org.fvg_o, current_org.fvg_c)
-                    
-                    // Check if current bar closes above candle #1 high
-                    if close > fvg_candle1_high and not limit_order_placed
-                        limit_order_price := fvg_candle1_high
-                        limit_order_placed := true
-                    
-                    // Check for entry execution (price hits limit order)
-                    if limit_order_placed and low <= limit_order_price and not trade_entered
-                        entry_price := limit_order_price
-                        stop_loss := fvg_candle3_high
-                        nearest_ssl := getNearestSSL()
-                        take_profit := not na(nearest_ssl) ? nearest_ssl : entry_price - 100
-                        trade_entered := true
-                        
-                        // Execute sell trade
-                        strategy.entry("Premium_Sell", strategy.short, qty=1)
-                        strategy.exit("Premium_Exit", "Premium_Sell", stop=stop_loss, limit=take_profit)
-            
-            // DISCOUNT ORG LOGIC  
-            if current_org.isDiscount and not trade_entered
-                
-                // Find nearest SSL if not already found
-                if na(nearest_ssl)
-                    nearest_ssl := getNearestSSL()
-                
-                // Check if SSL has been swept
-                if not na(nearest_ssl) and not liquidity_swept
-                    if low < nearest_ssl
-                        liquidity_swept := true
-                
-                // Discount entry logic after SSL sweep
-                if liquidity_swept and not na(current_org.fvg_o) and not na(current_org.fvg_c)
-                    
-                    // Get FVG candle levels (assuming fvg_c is top, fvg_o is bottom for discount)
-                    fvg_candle1_low = math.min(current_org.fvg_o, current_org.fvg_c)
-                    fvg_candle3_low = math.max(current_org.fvg_o, current_org.fvg_c)
-                    
-                    // Check if current bar closes below candle #1 low
-                    if close < fvg_candle1_low and not limit_order_placed
-                        limit_order_price := fvg_candle3_low
-                        limit_order_placed := true
-                    
-                    // Check for entry execution (price hits limit order)
-                    if limit_order_placed and high >= limit_order_price and not trade_entered
-                        entry_price := limit_order_price
-                        stop_loss := fvg_candle3_low
-                        nearest_bsl := getNearestBSL()
-                        take_profit := not na(nearest_bsl) ? nearest_bsl : entry_price + 100
-                        trade_entered := true
-                        
-                        // Execute buy trade
-                        strategy.entry("Discount_Buy", strategy.long, qty=1)
-                        strategy.exit("Discount_Exit", "Discount_Buy", stop=stop_loss, limit=take_profit)
+    if buyside_swept_this_bar and not buyside_swept_first and not sellside_swept_first
+        buyside_swept_first := true
+        looking_for_short := true
 
-// Profit management - move stop loss to 5 points profit when in 20 points profit
-if trade_entered and not na(entry_price) and ranges.size() > 0
-    current_org = ranges.first()
-    if current_org.isPremium and strategy.position_size < 0
-        // For short positions, profit is when current price is below entry
-        current_profit = entry_price - close
-        if current_profit >= 20 and stop_loss != entry_price - 5
-            stop_loss := entry_price - 5
-            strategy.exit("Premium_Exit", "Premium_Sell", stop=stop_loss, limit=take_profit)
+// DISCOUNT ENTRY LOGIC (Long after sellside sweep)
+if looking_for_long and first_fvg_found and strategy.position_size == 0
+    // For discount entry: wait for close above the 1FVG bottom (candle 1 wick low)
+    trigger_price = first_fvg_bottom  // This is the bottom of the FVG gap
+    entry_price = first_fvg_c1_low    // Enter at candle 1 wick low  
+    stop_price = first_fvg_c3_low - 2 // Stop at candle 3 wick low minus buffer
     
-    if current_org.isDiscount and strategy.position_size > 0
-        // For long positions, profit is when current price is above entry
-        current_profit = close - entry_price
-        if current_profit >= 20 and stop_loss != entry_price + 5
-            stop_loss := entry_price + 5
-            strategy.exit("Discount_Exit", "Discount_Buy", stop=stop_loss, limit=take_profit)
+    if close > trigger_price and entry_price > stop_price
+        strategy.entry("Long", strategy.long, limit=entry_price, comment="Discount Entry")
+        strategy.exit("Long Exit", "Long", stop=stop_price, comment="Long SL")
+        // Add visual confirmation
+        label.new(bar_index, low, "LONG ENTRY TRIGGERED\nTrigger: " + str.tostring(trigger_price) + "\nEntry: " + str.tostring(entry_price) + "\nStop: " + str.tostring(stop_price), 
+                 style=label.style_label_up, color=color.green, textcolor=color.white, size=size.normal)
 
-// Reset variables for new trading day
-if ta.change(time("1D"))
-    trade_entered := false
-    liquidity_swept := false
-    entry_price := na
-    stop_loss := na
-    take_profit := na
-    algorithm_closed := false
-    nearest_bsl := na
-    nearest_ssl := na
-    limit_order_placed := false
-    limit_order_price := na
+// PREMIUM ENTRY LOGIC (Short after buyside sweep)  
+if looking_for_short and first_fvg_found and strategy.position_size == 0
+    // For premium entry: wait for close below the 1FVG top (candle 3 wick high)
+    trigger_price = first_fvg_top     // This is the top of the FVG gap
+    entry_price = first_fvg_c3_high   // Enter at candle 3 wick high
+    stop_price = first_fvg_c1_high + 2 // Stop at candle 1 wick high plus buffer
+    
+    if close < trigger_price and entry_price < stop_price
+        strategy.entry("Short", strategy.short, limit=entry_price, comment="Premium Entry")
+        strategy.exit("Short Exit", "Short", stop=stop_price, comment="Short SL")
+        // Add visual confirmation
+        label.new(bar_index, high, "SHORT ENTRY TRIGGERED\nTrigger: " + str.tostring(trigger_price) + "\nEntry: " + str.tostring(entry_price) + "\nStop: " + str.tostring(stop_price), 
+                 style=label.style_label_down, color=color.red, textcolor=color.white, size=size.normal)
 
+// PROFIT TAKING LOGIC - Take profit at opposing liquidity levels
+var bool long_profit_taken = false
+var bool short_profit_taken = false
+
+// Check for profit taking on long positions
+if strategy.position_size > 0 and not long_profit_taken
+    // Look for buyside liquidity hit for profit taking
+    if b_liq_B.size() > 0
+        for i = 0 to b_liq_B.size() - 1
+            liq_level = b_liq_B.get(i)
+            // Check if price reached buyside liquidity level
+            if high >= liq_level.ln.get_y1()
+                strategy.close("Long", comment="Profit at Buyside Liquidity")
+                long_profit_taken := true
+                label.new(bar_index, high, "PROFIT TAKEN\nBuyside Liquidity Hit", 
+                         style=label.style_label_down, color=color.blue, textcolor=color.white, size=size.normal)
+                break
+
+// Check for profit taking on short positions  
+if strategy.position_size < 0 and not short_profit_taken
+    // Look for sellside liquidity hit for profit taking
+    if b_liq_S.size() > 0
+        for i = 0 to b_liq_S.size() - 1
+            liq_level = b_liq_S.get(i)
+            // Check if price reached sellside liquidity level
+            if low <= liq_level.ln.get_y1()
+                strategy.close("Short", comment="Profit at Sellside Liquidity")
+                short_profit_taken := true
+                label.new(bar_index, low, "PROFIT TAKEN\nSellside Liquidity Hit", 
+                         style=label.style_label_up, color=color.blue, textcolor=color.white, size=size.normal)
+                break
+
+// Reset profit flags when no position
+if strategy.position_size == 0
+    long_profit_taken := false
+    short_profit_taken := false 
