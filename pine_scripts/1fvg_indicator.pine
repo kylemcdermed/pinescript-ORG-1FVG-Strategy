@@ -908,7 +908,7 @@ if b_liq_V.size() > 0
 // 9. If price is 11 points past the entry price, stop loss goes 
 // 2 points into profit 
 
-// -------- GLOBAL STATE --------
+// ------- GLOBAL STATE -------
 var bool algoActive = false
 var bool orgTouched50Percent = false
 var bool liquiditySwept = false
@@ -918,100 +918,55 @@ var float stopLoss = na
 var float takeProfit = na
 var int entryTime = na
 var bool tradeActive = false
+var bool isShort = false
+var bool orgCETouched = false  // New: Track if ORG CE has been touched
+var bool waitingForEntry = false  // New: Track if we're waiting for entry trigger
+var float pendingEntryPrice = na  // New: Track pending limit order price
+var float pendingStopLoss = na    // New: Track pending stop loss
+var float pendingTakeProfit = na  // New: Track pending take profit
 
-// ------ STRUCT FOR STATE RETURN ------
-type TradeState
-    bool algoActive
-    bool orgTouched50Percent
-    bool liquiditySwept
-    bool orderPlaced
-    float entryPrice
-    float stopLoss
-    float takeProfit
-    int entryTime
-    bool tradeActive
+// Helper function to check if ORG CE has been touched
+isORGCETouched(OpenRange org) =>
+    if not na(org.close) and not na(org.open)
+        ceLevel = (org.open + org.close) / 2
+        // Check if current bar touched CE level
+        (high >= ceLevel and low <= ceLevel) or math.abs(close - ceLevel) < 0.01
+    else
+        false
 
-// ------ HELPER FUNCTIONS --------
+// Helper function to check if sellside liquidity has been swept
+isSellsideLiquiditySwept() =>
+    result = false
+    if b_liq_S.size() > 0
+        for i = 0 to b_liq_S.size() - 1
+            liqLevel = b_liq_S.get(i)
+            if liqLevel.brL  // If liquidity level is broken
+                result := true
+                break
+    result
 
-getTradingHours() =>
-    currentHour = hour(time, "America/New_York")
-    currentMinute = minute(time, "America/New_York")
-    (currentHour == 9 and currentMinute >= 30) or (currentHour == 10 and currentMinute == 0)
+// Helper function to check if buyside liquidity has been swept
+isBuysideLiquiditySwept() =>
+    result = false
+    if b_liq_B.size() > 0
+        for i = 0 to b_liq_B.size() - 1
+            liqLevel = b_liq_B.get(i)
+            if liqLevel.brL  // If liquidity level is broken
+                result := true
+                break
+    result
 
-checkLiquiditySwept(OpenRange org) =>
-    bool swept = false
-    if org.validSize and (org.isPremium or org.isDiscount)
-        currentHour = hour(time, "America/New_York")
-        if currentHour >= 9 and currentHour <= 12
-            if org.isDiscount
-                if b_liq_S.size() > 0
-                    for i = 0 to math.min(b_liq_S.size() - 1, 10)
-                        liqLevel = b_liq_S.get(i)
-                        if not na(liqLevel) and not liqLevel.brL
-                            if low < liqLevel.bx.get_bottom() - (atr * 0.1)
-                                swept := true
-                                break
-            if org.isPremium
-                if b_liq_B.size() > 0
-                    for i = 0 to math.min(b_liq_B.size() - 1, 10)
-                        liqLevel = b_liq_B.get(i)
-                        if not na(liqLevel) and not liqLevel.brL
-                            if high > liqLevel.bx.get_top() + (atr * 0.1)
-                                swept := true
-                                break
-    swept
-
-checkFVGEntry(OpenRange org) =>
-    bool validEntry = false
-    if org.validSize and org.isDiscount and not na(org.fvg_o) and not na(org.fvg_c)
-        fvgLow = math.min(org.fvg_o, org.fvg_c)
-        if close > fvgLow
-            validEntry := true
-    validEntry
-
-getEntryPrice(OpenRange org) =>
-    float entry = na
-    if not na(org.fvg_o) and not na(org.fvg_c)
-        entry := math.min(org.fvg_o, org.fvg_c)
-    entry
-
-getStopLoss(OpenRange org) =>
-    float sl = na
-    if not na(org.fvg_t)
-        sl := getEntryPrice(org) - (atr * 2)
-    sl
-
-getTakeProfit(OpenRange org) =>
-    float tp = na
-    if org.validSize and not na(org.open) and not na(org.close)
-        orgMidpoint = (org.open + org.close) / 2
-        tp := orgMidpoint
-    tp
-
-checkTrailingStop(float entryPrice, float currentPrice) =>
-    float newStop = na
-    if not na(entryPrice) and (currentPrice - entryPrice) >= 11
-        newStop := entryPrice + 2
-    newStop
-
-type TradeSetup
-    float entry
-    float sl
-    float tp
-    bool shouldPlace
-
-getTradeSetup(OpenRange org) =>
-    TradeSetup setup = TradeSetup.new()
-    setup.entry := getEntryPrice(org)
-    setup.sl := getStopLoss(org)
-    setup.tp := getTakeProfit(org)
-    setup.shouldPlace := true
-    setup
+// Helper function to get FVG candle data
+getFVGCandleData() =>
+    candle1_high = na(fvg_o) ? na : (fvg_o > fvg_c ? fvg_o : fvg_c)
+    candle1_low = na(fvg_o) ? na : (fvg_o < fvg_c ? fvg_o : fvg_c)
+    candle3_high = na(fvg_o) ? na : (fvg_o > fvg_c ? fvg_c : fvg_o)
+    candle3_low = na(fvg_o) ? na : (fvg_o < fvg_c ? fvg_c : fvg_o)
+    [candle1_high, candle1_low, candle3_high, candle3_low]
 
 // --------- MAIN LOGIC FUNCTION ---------
-// This function ONLY reads inputs & RETURNS updated state WITHOUT mutating inputs
-executeTradingLogic(bool algoActive_in, bool orgTouched50Percent_in, bool liquiditySwept_in, bool orderPlaced_in, float entryPrice_in, float stopLoss_in, float takeProfit_in, int entryTime_in, bool tradeActive_in) =>
-    // Incoming state copies
+executeTradingLogic(bool algoActive_in, bool orgTouched50Percent_in, bool liquiditySwept_in, bool orderPlaced_in, float entryPrice_in, float stopLoss_in, float takeProfit_in, int entryTime_in, bool tradeActive_in, bool isShort_in, bool orgCETouched_in, bool waitingForEntry_in, float pendingEntryPrice_in, float pendingStopLoss_in, float pendingTakeProfit_in) =>
+    
     bool algoActive_out = algoActive_in
     bool orgTouched50Percent_out = orgTouched50Percent_in
     bool liquiditySwept_out = liquiditySwept_in
@@ -1021,12 +976,19 @@ executeTradingLogic(bool algoActive_in, bool orgTouched50Percent_in, bool liquid
     float takeProfit_out = takeProfit_in
     int entryTime_out = entryTime_in
     bool tradeActive_out = tradeActive_in
+    bool isShort_out = isShort_in
+    bool orgCETouched_out = orgCETouched_in
+    bool waitingForEntry_out = waitingForEntry_in
+    float pendingEntryPrice_out = pendingEntryPrice_in
+    float pendingStopLoss_out = pendingStopLoss_in
+    float pendingTakeProfit_out = pendingTakeProfit_in
 
     if not validtimeframe() or ranges.size() == 0
-        [algoActive_out, orgTouched50Percent_out, liquiditySwept_out, orderPlaced_out, entryPrice_out, stopLoss_out, takeProfit_out, entryTime_out, tradeActive_out]
+        [algoActive_out, orgTouched50Percent_out, liquiditySwept_out, orderPlaced_out, entryPrice_out, stopLoss_out, takeProfit_out, entryTime_out, tradeActive_out, isShort_out, orgCETouched_out, waitingForEntry_out, pendingEntryPrice_out, pendingStopLoss_out, pendingTakeProfit_out]
     else
         OpenRange org = ranges.first()
 
+        // RESET DAILY STATE at session start
         if sessionStarted()
             algoActive_out := false
             orgTouched50Percent_out := false
@@ -1037,70 +999,155 @@ executeTradingLogic(bool algoActive_in, bool orgTouched50Percent_in, bool liquid
             takeProfit_out := na
             entryTime_out := na
             tradeActive_out := false
-        
-        if not na(org.open) and not na(org.close)
-            orgSize = math.abs(org.open - org.close)
-            if orgSize >= 30 and orgSize <= 250
-                org.isPremium := org.open > org.close
-                org.isDiscount := org.open < org.close
+            isShort_out := false
+            orgCETouched_out := false
+            waitingForEntry_out := false
+            pendingEntryPrice_out := na
+            pendingStopLoss_out := na
+            pendingTakeProfit_out := na
 
-                if getTradingHours()
-                    orgMidpoint = (org.open + org.close) / 2
-                    if (org.isPremium and low <= orgMidpoint) or (org.isDiscount and high >= orgMidpoint)
-                        orgTouched50Percent_out := true
+        currentHour = hour(time, "America/New_York")
+        currentMinute = minute(time, "America/New_York")
+
+        // Only trade during market hours (9:30 AM - 4:00 PM)
+        if currentHour >= 9 and currentHour < 16 and not tradeActive_out
+            
+            // STEP 1: Check ORG Parameters (Non-negotiable)
+            if not na(org.close) and not na(org.open) and org.validSize
+                orgSize = math.abs(org.open - org.close)
+                
+                // ORG size must be > 30 and < 250
+                if orgSize > 30 and orgSize < 250
+                    algoActive_out := true
+                    
+                    // Check if ORG CE has been touched (disqualifies trade)
+                    if isORGCETouched(org)
+                        orgCETouched_out := true
                         algoActive_out := false
+                    
+                    // Only proceed if CE hasn't been touched
+                    if algoActive_out and not orgCETouched_out
+                        ceLevel = (org.open + org.close) / 2
+                        
+                        // STEP 2: Determine if we're in Premium or Discount
+                        if org.isDiscount  // Discount Logic
+                            // Check if sellside liquidity has been swept
+                            if isSellsideLiquiditySwept()
+                                liquiditySwept_out := true
+                                
+                                // STEP 3: Look for 1PDA Entry (Discount)
+                                if not na(fvg_o) and not na(fvg_c)
+                                    [candle1_high, candle1_low, candle3_high, candle3_low] = getFVGCandleData()
+                                    
+                                    // Entry trigger: Current bar closes above LOW of candle #1
+                                    if not na(candle1_low) and close > candle1_low and not waitingForEntry_out
+                                        // Set buy limit order at max low of candle #3
+                                        if not na(candle3_low)
+                                            pendingEntryPrice_out := candle3_low
+                                            pendingStopLoss_out := candle3_low  // Stop loss at max low of candle #3
+                                            pendingTakeProfit_out := ceLevel + (ceLevel - org.open) * 0.5  // 50% of ORG to CE
+                                            waitingForEntry_out := true
+                                            
+                                            // Place buy limit order
+                                            strategy.entry("Long_Discount", strategy.long, limit=pendingEntryPrice_out)
+                                            strategy.exit("Exit_Long_Discount", "Long_Discount", stop=pendingStopLoss_out, limit=pendingTakeProfit_out)
+                                            
+                                            label.new(bar_index, pendingEntryPrice_out, "DISCOUNT LONG SETUP", color=color.green, textcolor=color.white, style=label.style_label_up, size=size.small)
+                                    
+                                    // Check if limit order was filled
+                                    if waitingForEntry_out and not na(pendingEntryPrice_out)
+                                        if low <= pendingEntryPrice_out
+                                            entryPrice_out := pendingEntryPrice_out
+                                            stopLoss_out := pendingStopLoss_out
+                                            takeProfit_out := pendingTakeProfit_out
+                                            entryTime_out := time
+                                            orderPlaced_out := true
+                                            tradeActive_out := true
+                                            isShort_out := false
+                                            waitingForEntry_out := false
+                                            
+                                            label.new(bar_index, entryPrice_out, "DISCOUNT LONG FILLED", color=color.lime, textcolor=color.white, style=label.style_label_up, size=size.small)
+                        
+                        else if org.isPremium  // Premium Logic
+                            // Check if buyside liquidity has been swept
+                            if isBuysideLiquiditySwept()
+                                liquiditySwept_out := true
+                                
+                                // STEP 3: Look for 1PDA Entry (Premium)
+                                if not na(fvg_o) and not na(fvg_c)
+                                    [candle1_high, candle1_low, candle3_high, candle3_low] = getFVGCandleData()
+                                    
+                                    // Entry trigger: Current bar closes below HIGH of candle #3
+                                    if not na(candle3_high) and close < candle3_high and not waitingForEntry_out
+                                        // Set sell limit order at max high of candle #1
+                                        if not na(candle1_high)
+                                            pendingEntryPrice_out := candle1_high
+                                            pendingStopLoss_out := candle3_high  // Stop loss at max high of candle #3
+                                            pendingTakeProfit_out := ceLevel - (org.open - ceLevel) * 0.5  // 50% of ORG to CE
+                                            waitingForEntry_out := true
+                                            
+                                            // Place sell limit order
+                                            strategy.entry("Short_Premium", strategy.short, limit=pendingEntryPrice_out)
+                                            strategy.exit("Exit_Short_Premium", "Short_Premium", stop=pendingStopLoss_out, limit=pendingTakeProfit_out)
+                                            
+                                            label.new(bar_index, pendingEntryPrice_out, "PREMIUM SHORT SETUP", color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
+                                    
+                                    // Check if limit order was filled
+                                    if waitingForEntry_out and not na(pendingEntryPrice_out)
+                                        if high >= pendingEntryPrice_out
+                                            entryPrice_out := pendingEntryPrice_out
+                                            stopLoss_out := pendingStopLoss_out
+                                            takeProfit_out := pendingTakeProfit_out
+                                            entryTime_out := time
+                                            orderPlaced_out := true
+                                            tradeActive_out := true
+                                            isShort_out := true
+                                            waitingForEntry_out := false
+                                            
+                                            label.new(bar_index, entryPrice_out, "PREMIUM SHORT FILLED", color=color.maroon, textcolor=color.white, style=label.style_label_down, size=size.small)
 
-                    if not orgTouched50Percent_out
-                        liquiditySwept_out := checkLiquiditySwept(org)
+        // Monitor active trades for exit conditions
+        if tradeActive_out
+            // Check if stop loss or take profit hit
+            if not isShort_out  // Long position
+                if low <= stopLoss_out
+                    strategy.close("Long_Discount", comment="Stop Loss Hit")
+                    label.new(bar_index, stopLoss_out, "STOP LOSS", color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
+                    tradeActive_out := false
+                    orderPlaced_out := false
+                else if high >= takeProfit_out
+                    strategy.close("Long_Discount", comment="Take Profit Hit")
+                    label.new(bar_index, takeProfit_out, "TAKE PROFIT", color=color.green, textcolor=color.white, style=label.style_label_up, size=size.small)
+                    tradeActive_out := false
+                    orderPlaced_out := false
+            else  // Short position
+                if high >= stopLoss_out
+                    strategy.close("Short_Premium", comment="Stop Loss Hit")
+                    label.new(bar_index, stopLoss_out, "STOP LOSS", color=color.red, textcolor=color.white, style=label.style_label_up, size=size.small)
+                    tradeActive_out := false
+                    orderPlaced_out := false
+                else if low <= takeProfit_out
+                    strategy.close("Short_Premium", comment="Take Profit Hit")
+                    label.new(bar_index, takeProfit_out, "TAKE PROFIT", color=color.green, textcolor=color.white, style=label.style_label_down, size=size.small)
+                    tradeActive_out := false
+                    orderPlaced_out := false
 
-                        if liquiditySwept_out and org.isDiscount and not orderPlaced_out
-                            if checkFVGEntry(org)
-                                tradeSetup = getTradeSetup(org)
-                                entryPrice_out := tradeSetup.entry
-                                stopLoss_out := tradeSetup.sl
-                                takeProfit_out := tradeSetup.tp
-                                entryTime_out := time
-                                orderPlaced_out := true
-
-                                if not na(entryPrice_out)
-                                    label.new(bar_index, entryPrice_out, "BUY ENTRY", color=color.green, textcolor=color.white, style=label.style_label_up, size=size.small)
-                                    // PLACE ENTRY ORDER here
-                                    strategy.entry("Long", strategy.long, limit=entryPrice_out)
-
-                        currentHour = hour(time, "America/New_York")
-                        if currentHour >= 10
-                            orderPlaced_out := true
-
-        if orderPlaced_out and not na(entryPrice_out)
-            if not tradeActive_out and close <= entryPrice_out
-                tradeActive_out := true
-                label.new(bar_index, close, "FILLED", color=color.blue, textcolor=color.white, style=label.style_label_down, size=size.small)
-
+        // End of day cleanup
+        if currentHour == 16 and currentMinute == 0
             if tradeActive_out
-                // TAKE PROFIT & STOP LOSS USING strategy.exit
-                strategy.exit("Exit Long", "Long", stop=stopLoss_out, limit=takeProfit_out)
+                strategy.close_all(comment="End of Day")
+                label.new(bar_index, close, "EOD EXIT", color=color.gray, textcolor=color.white, style=label.style_label_down, size=size.small)
+            tradeActive_out := false
+            orderPlaced_out := false
+            waitingForEntry_out := false
+            algoActive_out := false
 
-                if not na(takeProfit_out) and close >= takeProfit_out
-                    tradeActive_out := false
-                    label.new(bar_index, close, "TP HIT", color=color.green, textcolor=color.white, style=label.style_label_down, size=size.small)
-                else if not na(stopLoss_out) and close <= stopLoss_out
-                    tradeActive_out := false
-                    label.new(bar_index, close, "SL HIT", color=color.red, textcolor=color.white, style=label.style_label_down, size=size.small)
-                else
-                    // TRAILING STOP LOGIC - update stop loss dynamically if price moves up
-                    newStop = checkTrailingStop(entryPrice_out, close)
-                    if not na(newStop) and newStop > stopLoss_out
-                        stopLoss_out := newStop
-                        label.new(bar_index, stopLoss_out, "TRAIL SL", color=color.orange, textcolor=color.white, style=label.style_label_down, size=size.tiny)
-                        // Update exit order stop loss dynamically
-                        strategy.exit("Exit Long", "Long", stop=stopLoss_out, limit=takeProfit_out)
-
-        [algoActive_out, orgTouched50Percent_out, liquiditySwept_out, orderPlaced_out, entryPrice_out, stopLoss_out, takeProfit_out, entryTime_out, tradeActive_out]
+    [algoActive_out, orgTouched50Percent_out, liquiditySwept_out, orderPlaced_out, entryPrice_out, stopLoss_out, takeProfit_out, entryTime_out, tradeActive_out, isShort_out, orgCETouched_out, waitingForEntry_out, pendingEntryPrice_out, pendingStopLoss_out, pendingTakeProfit_out]
 
 // --- RUN MAIN LOGIC & UPDATE GLOBALS ---
-[algoActive_out, orgTouched50Percent_out, liquiditySwept_out, orderPlaced_out, entryPrice_out, stopLoss_out, takeProfit_out, entryTime_out, tradeActive_out] = executeTradingLogic(algoActive, orgTouched50Percent, liquiditySwept, orderPlaced, entryPrice, stopLoss, takeProfit, entryTime, tradeActive)
+[algoActive_out, orgTouched50Percent_out, liquiditySwept_out, orderPlaced_out, entryPrice_out, stopLoss_out, takeProfit_out, entryTime_out, tradeActive_out, isShort_out, orgCETouched_out, waitingForEntry_out, pendingEntryPrice_out, pendingStopLoss_out, pendingTakeProfit_out] = executeTradingLogic(algoActive, orgTouched50Percent, liquiditySwept, orderPlaced, entryPrice, stopLoss, takeProfit, entryTime, tradeActive, isShort, orgCETouched, waitingForEntry, pendingEntryPrice, pendingStopLoss, pendingTakeProfit)
 
-// Re-assign outputs back into global vars (do NOT redeclare!)
+// Re-assign outputs back into global vars
 algoActive := algoActive_out
 orgTouched50Percent := orgTouched50Percent_out
 liquiditySwept := liquiditySwept_out
@@ -1110,3 +1157,9 @@ stopLoss := stopLoss_out
 takeProfit := takeProfit_out
 entryTime := entryTime_out
 tradeActive := tradeActive_out
+isShort := isShort_out
+orgCETouched := orgCETouched_out
+waitingForEntry := waitingForEntry_out
+pendingEntryPrice := pendingEntryPrice_out
+pendingStopLoss := pendingStopLoss_out
+pendingTakeProfit := pendingTakeProfit_out
