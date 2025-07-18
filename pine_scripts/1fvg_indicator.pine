@@ -30,12 +30,19 @@ cLQV_S = input.color (color.new(#eb3434,  0), 'Bearish', inline = 'void', group 
 lqText = input.bool (false, 'Label', inline = 'void', group = liqGrp)
 
 mode   = input.string('Historical', title = 'Mode', options =['Present', 'Historical'], inline = 'MOD', group = liqGrp)
-visLiq = input.int   (100, '    # Visible Levels', minval = 1, maxval = 200, inline = 'MOD', group = liqGrp)
+visLiq = input.int   (500, '    # Visible Levels', minval = 1, maxval = 1000, inline = 'MOD', group = liqGrp)
+
+// TRADING TIME SETTINGS
+tradingGrp = 'Trading Hours'
+start_hour = input.int(9, "Start Hour", minval=0, maxval=23, group=tradingGrp)
+start_minute = input.int(30, "Start Minute", minval=0, maxval=59, group=tradingGrp)
+end_hour = input.int(12, "End Hour", minval=0, maxval=23, group=tradingGrp)
+end_minute = input.int(0, "End Minute", minval=0, maxval=59, group=tradingGrp)
 
 //-----------------------------------------------------------------------------}
 //General Calculations
 //-----------------------------------------------------------------------------{
-maxSize = 100
+maxSize = 500 // Increased for more historical data
 atr     = ta.atr(10)
 atr200  = ta.atr(200)
 per     = true  
@@ -144,8 +151,8 @@ if ph
                    box.new(st_B, st_P, b.i + 10, st_P, text = 'Buyside liquidity', text_size = size.tiny, text_halign = text.align_left, text_valign = text.align_bottom, text_color = color.new(cLIQ_B, 25), bgcolor = color(na), border_color = color(na)),
                    false, 
                    false,
-                   line.new(st_B, st_P, bar_index + 50, st_P, color = color.new(cLIQ_B, 0)),
-                   line.new(bar_index, st_P, bar_index + 200, st_P, color = color.new(cLIQ_B, 0), style = line.style_dotted))
+                   line.new(st_B, st_P, bar_index + 50, st_P, color = color.new(cLIQ_B, 0), extend = extend.right),
+                   line.new(bar_index, st_P, bar_index + 200, st_P, color = color.new(cLIQ_B, 0), style = line.style_dotted, extend = extend.right))
                  )
 
             if b_liq_B.size() > visLiq
@@ -203,8 +210,8 @@ if pl
                    box.new(st_B, st_P, b.i + 10, st_P, text = 'Sellside liquidity', text_size = size.tiny, text_halign = text.align_left, text_valign = text.align_top, text_color = color.new(cLIQ_S, 25), bgcolor=color(na), border_color=color(na)),
                    false,
                    false,
-                   line.new(st_B, st_P, bar_index + 50, st_P, color = color.new(cLIQ_S, 0)),
-                   line.new(bar_index, st_P, bar_index + 200, st_P, color = color.new(cLIQ_S, 0), style = line.style_dotted))
+                   line.new(st_B, st_P, bar_index + 50, st_P, color = color.new(cLIQ_S, 0), extend = extend.right),
+                   line.new(bar_index, st_P, bar_index + 200, st_P, color = color.new(cLIQ_S, 0), style = line.style_dotted, extend = extend.right))
                  )  
 
             if b_liq_S.size() > visLiq
@@ -294,12 +301,12 @@ get1mFVG() =>
     
     [fvg_top, fvg_bottom, fvg_high_c1, fvg_low_c1, fvg_high_c3, fvg_low_c3, is_bullish_fvg, is_bearish_fvg]
 
-// Draw ALL FVGs
+// Draw ALL FVGs with extend
 [fvg_top, fvg_bottom, c1_high, c1_low, c3_high, c3_low, is_bull, is_bear] = get1mFVG()
 
 if not na(fvg_top) and not na(fvg_bottom)
-    line.new(bar_index, fvg_top, bar_index + 30, fvg_top, color=color.green, width=1)
-    line.new(bar_index, fvg_bottom, bar_index + 30, fvg_bottom, color=color.red, width=1)
+    line.new(bar_index, fvg_top, bar_index + 30, fvg_top, color=color.green, width=1, extend = extend.right)
+    line.new(bar_index, fvg_bottom, bar_index + 30, fvg_bottom, color=color.red, width=1, extend = extend.right)
     box.new(bar_index, fvg_top, bar_index + 30, fvg_bottom, bgcolor=color.new(color.blue, 90), border_color=color.blue)
 
 //------------------------------------------------------------------------------
@@ -308,6 +315,13 @@ if not na(fvg_top) and not na(fvg_bottom)
 
 is_market_session = time(timeframe.period, "0930-1615", "America/New_York")
 is_after_930 = hour(time, "America/New_York") >= 9 and minute(time, "America/New_York") >= 30
+
+// TRADING WINDOW - Only trade between user-defined hours
+current_hour = hour(time, "America/New_York")
+current_minute = minute(time, "America/New_York")
+trading_window = (current_hour > start_hour or (current_hour == start_hour and current_minute >= start_minute)) and 
+                 (current_hour < end_hour or (current_hour == end_hour and current_minute <= end_minute))
+
 session_change = ta.change(time("D"))
 
 var bool session_started = false
@@ -316,6 +330,7 @@ var bool sellside_swept_first = false
 var bool buyside_swept_first = false
 var bool looking_for_long = false
 var bool looking_for_short = false
+var bool trade_taken_today = false  // NEW: Only one trade per day
 
 var float first_fvg_top = na
 var float first_fvg_bottom = na
@@ -332,6 +347,7 @@ if session_change
     buyside_swept_first := false
     looking_for_long := false
     looking_for_short := false
+    trade_taken_today := false  // RESET: Allow one trade per new day
     first_fvg_top := na
     first_fvg_bottom := na
     first_fvg_c1_high := na
@@ -372,13 +388,34 @@ if session_started and is_after_930 and not sellside_swept_first and not buyside
                 looking_for_short := true
                 break
 
-// ENTRIES
-if looking_for_long and first_fvg_found and strategy.position_size == 0
+// ENTRIES - Only during trading window and only one trade per day
+if looking_for_long and first_fvg_found and strategy.position_size == 0 and trading_window and not trade_taken_today
     if close > first_fvg_c1_low
         strategy.entry("Long", strategy.long, qty=1)
         strategy.exit("Long Exit", "Long", stop=first_fvg_c3_low)
+        trade_taken_today := true  // Mark trade as taken
 
-if looking_for_short and first_fvg_found and strategy.position_size == 0
+if looking_for_short and first_fvg_found and strategy.position_size == 0 and trading_window and not trade_taken_today
     if close < first_fvg_c3_high
         strategy.entry("Short", strategy.short, qty=1)
         strategy.exit("Short Exit", "Short", stop=first_fvg_c1_high)
+        trade_taken_today := true  // Mark trade as taken
+
+// PROFIT TAKING - Let trades run to opposing liquidity
+if strategy.position_size > 0 and not trade_taken_today
+    // Look for buyside liquidity hit for profit taking
+    if b_liq_B.size() > 0
+        for i = 0 to b_liq_B.size() - 1
+            liq_level = b_liq_B.get(i)
+            if high >= liq_level.ln.get_y1()
+                strategy.close("Long", comment="Profit at BSL")
+                break
+
+if strategy.position_size < 0 and not trade_taken_today
+    // Look for sellside liquidity hit for profit taking
+    if b_liq_S.size() > 0
+        for i = 0 to b_liq_S.size() - 1
+            liq_level = b_liq_S.get(i)
+            if low <= liq_level.ln.get_y1()
+                strategy.close("Short", comment="Profit at SSL")
+                break
