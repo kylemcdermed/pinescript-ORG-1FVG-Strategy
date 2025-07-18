@@ -26,12 +26,12 @@ cLQV_S = input.color (color.new(#eb3434,  0), 'Bearish', inline = 'void', group 
 lqText = input.bool (false, 'Label', inline = 'void', group = liqGrp)
 
 mode   = input.string('Historical', title = 'Mode', options =['Present', 'Historical'], inline = 'MOD', group = liqGrp)
-visLiq = input.int   (10, '    # Visible Levels', minval = 1, maxval = 50, inline = 'MOD', group = liqGrp)
+visLiq = input.int   (50, '    # Visible Levels', minval = 1, maxval = 200, inline = 'MOD', group = liqGrp)
 
 //-----------------------------------------------------------------------------}
 //General Calculations
 //-----------------------------------------------------------------------------{
-maxSize = 50 // how much liquidity will be shown or stored 
+maxSize = 500 // Increased to store more liquidity levels for 1m timeframe 
 atr     = ta.atr(10)
 atr200  = ta.atr(200)
 // only draw liquidity levels (remove time restriction to keep them visible)
@@ -85,7 +85,8 @@ var int dir = na, var int x1 = na, var float y1 = na, var int x2 = na, var float
 method in_out(ZZ aZZ, int _d, int _x, float _y) =>
     aZZ.d.unshift(_d), aZZ.x.unshift(_x), aZZ.y.unshift(_y), aZZ.d.pop(), aZZ.x.pop(), aZZ.y.pop()
 
-max_bars_back(time, 1000)
+// Re-add max_bars_back with higher limit for 1m timeframe
+max_bars_back(time, 5000)
 
 //-----------------------------------------------------------------------------}
 //Liquidity Calculations
@@ -305,7 +306,7 @@ var box fvg_box = na
 //TRADING LOGIC
 //-----------------------------------------------------------------------------{
 
-// Trading session management - simplified for 1-minute timeframe
+// Trading session management - optimized for 1-minute timeframe
 is_market_session = time(timeframe.period, "0930-1615", "America/New_York")
 is_after_930 = hour(time, "America/New_York") >= 9 and minute(time, "America/New_York") >= 30
 session_change = ta.change(time("D"))
@@ -361,18 +362,29 @@ if session_started and not first_fvg_found and is_after_930
         first_fvg_c3_low := c3_low
         first_fvg_bullish := is_bull
         
-        // Draw the FVG
-        fvg_top_line := line.new(bar_index, fvg_top, bar_index + 50, fvg_top, color=color.green, width=2, style=line.style_solid)
-        fvg_bottom_line := line.new(bar_index, fvg_bottom, bar_index + 50, fvg_bottom, color=color.red, width=2, style=line.style_solid)
-        fvg_ce_line := line.new(bar_index, (fvg_top + fvg_bottom)/2, bar_index + 50, (fvg_top + fvg_bottom)/2, color=color.yellow, width=1, style=line.style_dashed)
-        fvg_box := box.new(bar_index, fvg_top, bar_index + 50, fvg_bottom, bgcolor=color.new(color.blue, 90), border_color=color.blue)
+        // Draw the FVG - extended further for 1m timeframe
+        fvg_top_line := line.new(bar_index, fvg_top, bar_index + 200, fvg_top, color=color.green, width=2, style=line.style_solid)
+        fvg_bottom_line := line.new(bar_index, fvg_bottom, bar_index + 200, fvg_bottom, color=color.red, width=2, style=line.style_solid)
+        fvg_ce_line := line.new(bar_index, (fvg_top + fvg_bottom)/2, bar_index + 200, (fvg_top + fvg_bottom)/2, color=color.yellow, width=1, style=line.style_dashed)
+        fvg_box := box.new(bar_index, fvg_top, bar_index + 200, fvg_bottom, bgcolor=color.new(color.blue, 90), border_color=color.blue)
+        
+        // Debug: FVG found label
+        label.new(bar_index, math.avg(fvg_top, fvg_bottom), "1FVG FOUND\nBull: " + str.tostring(is_bull) + "\nBear: " + str.tostring(is_bear), 
+                 style=label.style_label_left, color=color.blue, textcolor=color.white, size=size.normal)
 
-// Update FVG lines
+// Update FVG lines - extended for 1m timeframe
 if not na(fvg_top_line)
-    line.set_x2(fvg_top_line, bar_index + 10)
-    line.set_x2(fvg_bottom_line, bar_index + 10)
-    line.set_x2(fvg_ce_line, bar_index + 10)
-    box.set_right(fvg_box, bar_index + 10)
+    line.set_x2(fvg_top_line, bar_index + 50)
+    line.set_x2(fvg_bottom_line, bar_index + 50)
+    line.set_x2(fvg_ce_line, bar_index + 50)
+    box.set_right(fvg_box, bar_index + 50)
+
+// Debug labels to check if liquidity and FVG detection is working
+if session_started and is_after_930
+    // Debug: Show session status
+    if barstate.islast
+        label.new(bar_index, high, "Session Active\nLooking for liquidity sweeps", 
+                 style=label.style_label_down, color=color.gray, textcolor=color.white, size=size.small)
 
 // Check for liquidity sweeps - improved detection
 sellside_swept_this_bar = false
@@ -403,17 +415,23 @@ if session_started and is_after_930 and not sellside_swept_first and not buyside
     if sellside_swept_this_bar and not sellside_swept_first and not buyside_swept_first
         sellside_swept_first := true
         looking_for_long := true
+        // Debug: Sellside swept label
+        label.new(bar_index, low, "SELLSIDE SWEPT\nLooking for LONG", 
+                 style=label.style_label_up, color=color.orange, textcolor=color.white, size=size.normal)
         
     if buyside_swept_this_bar and not buyside_swept_first and not sellside_swept_first
         buyside_swept_first := true
         looking_for_short := true
+        // Debug: Buyside swept label
+        label.new(bar_index, high, "BUYSIDE SWEPT\nLooking for SHORT", 
+                 style=label.style_label_down, color=color.orange, textcolor=color.white, size=size.normal)
 
 // DISCOUNT ENTRY LOGIC (Long after sellside sweep)
 if looking_for_long and first_fvg_found and strategy.position_size == 0
-    // For discount entry: wait for close above the 1FVG bottom (candle 1 wick low)
-    trigger_price = first_fvg_bottom  // This is the bottom of the FVG gap
-    entry_price = first_fvg_c1_low    // Enter at candle 1 wick low  
-    stop_price = first_fvg_c3_low - 2 // Stop at candle 3 wick low minus buffer
+    // UPDATED: Trigger is close above candle 1 wick low, Stop is candle 3 wick low explicitly
+    trigger_price = first_fvg_c1_low  // Trigger: close above candle 1 wick low
+    entry_price = first_fvg_c1_low    // Entry: limit at candle 1 wick low  
+    stop_price = first_fvg_c3_low     // Stop: candle 3 wick low (no buffer)
     
     if close > trigger_price and entry_price > stop_price
         strategy.entry("Long", strategy.long, limit=entry_price, comment="Discount Entry")
@@ -424,10 +442,10 @@ if looking_for_long and first_fvg_found and strategy.position_size == 0
 
 // PREMIUM ENTRY LOGIC (Short after buyside sweep)  
 if looking_for_short and first_fvg_found and strategy.position_size == 0
-    // For premium entry: wait for close below the 1FVG top (candle 3 wick high)
-    trigger_price = first_fvg_top     // This is the top of the FVG gap
-    entry_price = first_fvg_c3_high   // Enter at candle 3 wick high
-    stop_price = first_fvg_c1_high + 2 // Stop at candle 1 wick high plus buffer
+    // UPDATED: Trigger is close below candle 3 wick high, Stop is candle 1 wick high explicitly
+    trigger_price = first_fvg_c3_high // Trigger: close below candle 3 wick high
+    entry_price = first_fvg_c3_high   // Entry: limit at candle 3 wick high
+    stop_price = first_fvg_c1_high    // Stop: candle 1 wick high (no buffer)
     
     if close < trigger_price and entry_price < stop_price
         strategy.entry("Short", strategy.short, limit=entry_price, comment="Premium Entry")
@@ -471,4 +489,4 @@ if strategy.position_size < 0 and not short_profit_taken
 // Reset profit flags when no position
 if strategy.position_size == 0
     long_profit_taken := false
-    short_profit_taken := false 
+    short_profit_taken := false
