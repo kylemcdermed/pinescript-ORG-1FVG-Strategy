@@ -266,38 +266,56 @@ for i = 0 to b_liq_S.size() - 1
 //1FVG DETECTION CODE
 //-----------------------------------------------------------------------------{
 
-// Function to detect 1FVG
+// Function to detect 1FVG - WITH ALL 3 CANDLES
 get1mFVG() =>
     float fvg_top = na
     float fvg_bottom = na
     float fvg_high_c1 = na
     float fvg_low_c1 = na
+    float fvg_high_c2 = na
+    float fvg_low_c2 = na
     float fvg_high_c3 = na
     float fvg_low_c3 = na
     bool is_bullish_fvg = false
     bool is_bearish_fvg = false
     
-    // Check for bullish FVG (gap up) - candle 1 low > candle 3 high
+    // Check for bullish FVG (gap up) - current candle low > 2 bars ago high
     if low > high[2]
         is_bullish_fvg := true
-        fvg_bottom := high[2]  // Bottom of gap
-        fvg_top := low         // Top of gap
-        fvg_high_c1 := high    // Candle 1 wick high
-        fvg_low_c1 := low      // Candle 1 wick low  
-        fvg_high_c3 := high[2] // Candle 3 wick high
-        fvg_low_c3 := low[2]   // Candle 3 wick low
-    
-    // Check for bearish FVG (gap down) - candle 1 high < candle 3 low
-    if high < low[2]
-        is_bearish_fvg := true
-        fvg_top := low[2]      // Top of gap
-        fvg_bottom := high     // Bottom of gap
+        fvg_bottom := high[2]  // Bottom of gap (candle 3 high)
+        fvg_top := low         // Top of gap (candle 1 low)
+        
+        // Candle 1 = current candle (index 0)
         fvg_high_c1 := high    // Candle 1 wick high
         fvg_low_c1 := low      // Candle 1 wick low
+        
+        // Candle 2 = 1 bar ago (index [1])
+        fvg_high_c2 := high[1] // Candle 2 wick high
+        fvg_low_c2 := low[1]   // Candle 2 wick low
+        
+        // Candle 3 = 2 bars ago (index [2])  
         fvg_high_c3 := high[2] // Candle 3 wick high
         fvg_low_c3 := low[2]   // Candle 3 wick low
     
-    [fvg_top, fvg_bottom, fvg_high_c1, fvg_low_c1, fvg_high_c3, fvg_low_c3, is_bullish_fvg, is_bearish_fvg]
+    // Check for bearish FVG (gap down) - current candle high < 2 bars ago low
+    if high < low[2]
+        is_bearish_fvg := true
+        fvg_top := low[2]      // Top of gap (candle 3 low)
+        fvg_bottom := high     // Bottom of gap (candle 1 high)
+        
+        // Candle 1 = current candle (index 0)
+        fvg_high_c1 := high    // Candle 1 wick high
+        fvg_low_c1 := low      // Candle 1 wick low
+        
+        // Candle 2 = 1 bar ago (index [1])
+        fvg_high_c2 := high[1] // Candle 2 wick high
+        fvg_low_c2 := low[1]   // Candle 2 wick low
+        
+        // Candle 3 = 2 bars ago (index [2])
+        fvg_high_c3 := high[2] // Candle 3 wick high
+        fvg_low_c3 := low[2]   // Candle 3 wick low
+    
+    [fvg_top, fvg_bottom, fvg_high_c1, fvg_low_c1, fvg_high_c2, fvg_low_c2, fvg_high_c3, fvg_low_c3, is_bullish_fvg, is_bearish_fvg]
 
 // Draw 1FVG levels
 var line fvg_top_line = na
@@ -325,11 +343,13 @@ var bool looking_for_long = false
 var bool looking_for_short = false
 var bool trade_taken_today = false
 
-// 1FVG variables
+// 1FVG variables - ADDED C2 VALUES
 var float first_fvg_top = na
 var float first_fvg_bottom = na
 var float first_fvg_c1_high = na
-var float first_fvg_c1_low = na  
+var float first_fvg_c1_low = na
+var float first_fvg_c2_high = na
+var float first_fvg_c2_low = na
 var float first_fvg_c3_high = na
 var float first_fvg_c3_low = na
 var bool first_fvg_bullish = false
@@ -347,6 +367,8 @@ if session_change
     first_fvg_bottom := na
     first_fvg_c1_high := na
     first_fvg_c1_low := na
+    first_fvg_c2_high := na
+    first_fvg_c2_low := na
     first_fvg_c3_high := na
     first_fvg_c3_low := na
     first_fvg_bullish := false
@@ -357,7 +379,7 @@ if is_market_session and not session_started
 
 // Detect first FVG of the session
 if session_started and not first_fvg_found and is_after_930
-    [fvg_top, fvg_bottom, c1_high, c1_low, c3_high, c3_low, is_bull, is_bear] = get1mFVG()
+    [fvg_top, fvg_bottom, c1_high, c1_low, c2_high, c2_low, c3_high, c3_low, is_bull, is_bear] = get1mFVG()
     
     if not na(fvg_top) and not na(fvg_bottom)
         first_fvg_found := true
@@ -365,6 +387,8 @@ if session_started and not first_fvg_found and is_after_930
         first_fvg_bottom := fvg_bottom
         first_fvg_c1_high := c1_high
         first_fvg_c1_low := c1_low
+        first_fvg_c2_high := c2_high
+        first_fvg_c2_low := c2_low
         first_fvg_c3_high := c3_high
         first_fvg_c3_low := c3_low
         first_fvg_bullish := is_bull
@@ -374,6 +398,10 @@ if session_started and not first_fvg_found and is_after_930
         fvg_bottom_line := line.new(bar_index, fvg_bottom, bar_index + 50, fvg_bottom, color=color.red, width=2, style=line.style_solid)
         fvg_ce_line := line.new(bar_index, (fvg_top + fvg_bottom)/2, bar_index + 50, (fvg_top + fvg_bottom)/2, color=color.yellow, width=1, style=line.style_dashed)
         fvg_box := box.new(bar_index, fvg_top, bar_index + 50, fvg_bottom, bgcolor=color.new(color.blue, 90), border_color=color.blue)
+        
+        // Clean label with only the 6 candle levels
+        label.new(bar_index, math.avg(fvg_top, fvg_bottom), "C1 High: " + str.tostring(c1_high) + "\nC1 Low: " + str.tostring(c1_low) + "\nC2 High: " + str.tostring(c2_high) + "\nC2 Low: " + str.tostring(c2_low) + "\nC3 High: " + str.tostring(c3_high) + "\nC3 Low: " + str.tostring(c3_low), 
+                 style=label.style_label_left, color=color.yellow, textcolor=color.black, size=size.normal)
 
 // Update FVG lines
 if not na(fvg_top_line)
@@ -416,28 +444,34 @@ if session_started and is_after_930 and not sellside_swept_first and not buyside
         buyside_swept_first := true
         looking_for_short := true
 
-// ENTRIES - SIMPLIFIED FOR 1-MINUTE MARKET ORDERS
+// ENTRIES - CORRECTED LOGIC
 if looking_for_long and first_fvg_found and strategy.position_size == 0 and not trade_taken_today
-    // Market entry when price is within the FVG range
-    if close >= first_fvg_bottom and close <= first_fvg_top
-        strategy.entry("Long", strategy.long, qty=1, comment="Long Entry")
-        strategy.exit("Long Exit", "Long", stop=first_fvg_c3_low - 2, comment="Long SL")
+    // LONG ENTRY LOGIC (after sellside sweep):
+    // Trigger: current candle closes above C3 Low
+    // Entry: buy limit at C3 Low  
+    // Stop: C1 Low
+    
+    current_c3_low = first_fvg_c3_low    // Entry price
+    current_c1_low = first_fvg_c1_low    // Stop loss price
+    
+    if close > current_c3_low  // Close above C3 Low (trigger)
+        strategy.entry("Long", strategy.long, limit=current_c3_low, comment="Long Entry")
+        strategy.exit("Long Exit", "Long", stop=current_c1_low, comment="Long SL")
         trade_taken_today := true
-        
-        // Visual confirmation
-        label.new(bar_index, low, "LONG ENTERED\nEntry: " + str.tostring(close) + "\nStop: " + str.tostring(first_fvg_c3_low - 2), 
-                 style=label.style_label_up, color=color.green, textcolor=color.white, size=size.small)
 
 if looking_for_short and first_fvg_found and strategy.position_size == 0 and not trade_taken_today
-    // Market entry when price is within the FVG range
-    if close >= first_fvg_bottom and close <= first_fvg_top
-        strategy.entry("Short", strategy.short, qty=1, comment="Short Entry")
-        strategy.exit("Short Exit", "Short", stop=first_fvg_c1_high + 2, comment="Short SL")
+    // SHORT ENTRY LOGIC (after buyside sweep):
+    // Trigger: current candle closes below C3 High
+    // Entry: sell limit at C3 High
+    // Stop: C1 High
+    
+    current_c3_high = first_fvg_c3_high  // Entry price
+    current_c1_high = first_fvg_c1_high  // Stop loss price
+    
+    if close < current_c3_high  // Close below C3 High (trigger)
+        strategy.entry("Short", strategy.short, limit=current_c3_high, comment="Short Entry")
+        strategy.exit("Short Exit", "Short", stop=current_c1_high, comment="Short SL")
         trade_taken_today := true
-        
-        // Visual confirmation
-        label.new(bar_index, high, "SHORT ENTERED\nEntry: " + str.tostring(close) + "\nStop: " + str.tostring(first_fvg_c1_high + 2), 
-                 style=label.style_label_down, color=color.red, textcolor=color.white, size=size.small)
 
 // Cancel any pending orders at 12:00 PM
 if current_hour >= 12 and current_minute >= 0
