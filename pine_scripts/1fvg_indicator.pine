@@ -1,8 +1,12 @@
 //@version=5 
 strategy("NQ1! 1m Liquidity + 1FVG Strategy", overlay=true, margin_long=100, margin_short=100)
 
+// Force 1-minute timeframe only
+if timeframe.period != "1"
+    runtime.error("This strategy ONLY works on 1-minute charts. Switch to 1m timeframe.")
+
 //------------------------------------------------------------------------------
-//BUY SIDE AND SELL SIDE LIQUIDITY CODE BELOW 
+//BUY SIDE AND SELL SIDE LIQUIDITY CODE
 //-----------------------------------------------------------------------------{
 
 //------------------------------------------------------------------------------
@@ -26,24 +30,23 @@ cLQV_S = input.color (color.new(#eb3434,  0), 'Bearish', inline = 'void', group 
 lqText = input.bool (false, 'Label', inline = 'void', group = liqGrp)
 
 mode   = input.string('Historical', title = 'Mode', options =['Present', 'Historical'], inline = 'MOD', group = liqGrp)
-visLiq = input.int   (50, '    # Visible Levels', minval = 1, maxval = 200, inline = 'MOD', group = liqGrp)
+visLiq = input.int   (100, '    # Visible Levels', minval = 1, maxval = 200, inline = 'MOD', group = liqGrp)
 
 //-----------------------------------------------------------------------------}
 //General Calculations
 //-----------------------------------------------------------------------------{
-maxSize = 500 // Increased to store more liquidity levels for 1m timeframe 
+maxSize = 100
 atr     = ta.atr(10)
 atr200  = ta.atr(200)
-// only draw liquidity levels (remove time restriction to keep them visible)
-per     = true  // Always show liquidity levels
+per     = true  
 
 //-----------------------------------------------------------------------------}
 //User Defined Types
 //-----------------------------------------------------------------------------{
 type ZZ 
-    int   [] d // tracks DIRECTION at each pivot 
-    int   [] x // bar index based on TIME on chart 
-    float [] y // stores the PRICE at each pivot 
+    int   [] d 
+    int   [] x 
+    float [] y 
 
 type bar
     float o = open
@@ -57,7 +60,7 @@ type liq
     box   bxz
     box   bxt
     bool  brZ 
-    bool  brL // liquidity level broken
+    bool  brL 
     line  ln
     line  lne
 
@@ -85,11 +88,10 @@ var int dir = na, var int x1 = na, var float y1 = na, var int x2 = na, var float
 method in_out(ZZ aZZ, int _d, int _x, float _y) =>
     aZZ.d.unshift(_d), aZZ.x.unshift(_x), aZZ.y.unshift(_y), aZZ.d.pop(), aZZ.x.pop(), aZZ.y.pop()
 
-// Re-add max_bars_back with higher limit for 1m timeframe
-max_bars_back(time, 5000)
+max_bars_back(time, 2000)
 
 //-----------------------------------------------------------------------------}
-//Liquidity Calculations
+//Liquidity Calculations - SHOW BSL/SSL LINES
 //-----------------------------------------------------------------------------{
 x2 := b.i - 1 
 ph  = ta.pivothigh(liqLen, 1) 
@@ -142,7 +144,7 @@ if ph
                    box.new(st_B, st_P, b.i + 10, st_P, text = 'Buyside liquidity', text_size = size.tiny, text_halign = text.align_left, text_valign = text.align_bottom, text_color = color.new(cLIQ_B, 25), bgcolor = color(na), border_color = color(na)),
                    false, 
                    false,
-                   line.new(st_B   , st_P, bar_index + 50, st_P, color = color.new(cLIQ_B, 0)),
+                   line.new(st_B, st_P, bar_index + 50, st_P, color = color.new(cLIQ_B, 0)),
                    line.new(bar_index, st_P, bar_index + 200, st_P, color = color.new(cLIQ_B, 0), style = line.style_dotted))
                  )
 
@@ -201,7 +203,7 @@ if pl
                    box.new(st_B, st_P, b.i + 10, st_P, text = 'Sellside liquidity', text_size = size.tiny, text_halign = text.align_left, text_valign = text.align_top, text_color = color.new(cLIQ_S, 25), bgcolor=color(na), border_color=color(na)),
                    false,
                    false,
-                   line.new(st_B   , st_P, bar_index + 50, st_P, color = color.new(cLIQ_S, 0)),
+                   line.new(st_B, st_P, bar_index + 50, st_P, color = color.new(cLIQ_S, 0)),
                    line.new(bar_index, st_P, bar_index + 200, st_P, color = color.new(cLIQ_S, 0), style = line.style_dotted))
                  )  
 
@@ -223,7 +225,6 @@ for i = 0 to b_liq_B.size() - 1
         if b.h > x.bx.get_top()
             x.brL := true
             x.brZ := true
-
             x.bxz.set_lefttop(b.i - 1, math.min(x.ln.get_y1() + marBuy * (atr), b.h))
             x.bxz.set_rightbottom(b.i + 1, x.ln.get_y1())
             x.bxz.set_bgcolor(color.new(cLIQ_B, liqBuy ? 73 : 100))
@@ -246,7 +247,6 @@ for i = 0 to b_liq_S.size() - 1
         if b.l < x.bx.get_bottom()
             x.brL := true
             x.brZ := true
-
             x.bxz.set_lefttop(b.i - 1, x.ln.get_y1())
             x.bxz.set_rightbottom(b.i + 1, math.max(x.ln.get_y1() - marSel * (atr), b.l))
             x.bxz.set_bgcolor(color.new(cLIQ_S, liqSel ? 73 : 100))
@@ -260,7 +260,7 @@ for i = 0 to b_liq_S.size() - 1
             x.brZ := false
 
 //------------------------------------------------------------------------------
-//1FVG DETECTION CODE
+//1FVG DETECTION AND DISPLAY
 //-----------------------------------------------------------------------------{
 
 // Function to detect 1FVG
@@ -274,44 +274,42 @@ get1mFVG() =>
     bool is_bullish_fvg = false
     bool is_bearish_fvg = false
     
-    // Check for bullish FVG (gap up) - candle 1 low > candle 3 high
     if low > high[2]
         is_bullish_fvg := true
-        fvg_bottom := high[2]  // Bottom of gap
-        fvg_top := low         // Top of gap
-        fvg_high_c1 := high    // Candle 1 wick high
-        fvg_low_c1 := low      // Candle 1 wick low  
-        fvg_high_c3 := high[2] // Candle 3 wick high
-        fvg_low_c3 := low[2]   // Candle 3 wick low
+        fvg_bottom := high[2]  
+        fvg_top := low         
+        fvg_high_c1 := high    
+        fvg_low_c1 := low      
+        fvg_high_c3 := high[2] 
+        fvg_low_c3 := low[2]   
     
-    // Check for bearish FVG (gap down) - candle 1 high < candle 3 low
     if high < low[2]
         is_bearish_fvg := true
-        fvg_top := low[2]      // Top of gap
-        fvg_bottom := high     // Bottom of gap
-        fvg_high_c1 := high    // Candle 1 wick high
-        fvg_low_c1 := low      // Candle 1 wick low
-        fvg_high_c3 := high[2] // Candle 3 wick high
-        fvg_low_c3 := low[2]   // Candle 3 wick low
+        fvg_top := low[2]      
+        fvg_bottom := high     
+        fvg_high_c1 := high    
+        fvg_low_c1 := low      
+        fvg_high_c3 := high[2] 
+        fvg_low_c3 := low[2]   
     
     [fvg_top, fvg_bottom, fvg_high_c1, fvg_low_c1, fvg_high_c3, fvg_low_c3, is_bullish_fvg, is_bearish_fvg]
 
-// Draw 1FVG levels
-var line fvg_top_line = na
-var line fvg_bottom_line = na
-var line fvg_ce_line = na
-var box fvg_box = na
+// Draw ALL FVGs
+[fvg_top, fvg_bottom, c1_high, c1_low, c3_high, c3_low, is_bull, is_bear] = get1mFVG()
+
+if not na(fvg_top) and not na(fvg_bottom)
+    line.new(bar_index, fvg_top, bar_index + 30, fvg_top, color=color.green, width=1)
+    line.new(bar_index, fvg_bottom, bar_index + 30, fvg_bottom, color=color.red, width=1)
+    box.new(bar_index, fvg_top, bar_index + 30, fvg_bottom, bgcolor=color.new(color.blue, 90), border_color=color.blue)
 
 //------------------------------------------------------------------------------
-//TRADING LOGIC
+//TRADING LOGIC - 1 MINUTE ONLY
 //-----------------------------------------------------------------------------{
 
-// Trading session management - optimized for 1-minute timeframe
 is_market_session = time(timeframe.period, "0930-1615", "America/New_York")
 is_after_930 = hour(time, "America/New_York") >= 9 and minute(time, "America/New_York") >= 30
 session_change = ta.change(time("D"))
 
-// Session reset variables
 var bool session_started = false
 var bool first_fvg_found = false
 var bool sellside_swept_first = false
@@ -319,16 +317,14 @@ var bool buyside_swept_first = false
 var bool looking_for_long = false
 var bool looking_for_short = false
 
-// 1FVG variables
 var float first_fvg_top = na
 var float first_fvg_bottom = na
 var float first_fvg_c1_high = na
 var float first_fvg_c1_low = na  
 var float first_fvg_c3_high = na
 var float first_fvg_c3_low = na
-var bool first_fvg_bullish = false
 
-// Session management - reset on new day
+// Session reset
 if session_change
     session_started := false
     first_fvg_found := false
@@ -342,16 +338,12 @@ if session_change
     first_fvg_c1_low := na
     first_fvg_c3_high := na
     first_fvg_c3_low := na
-    first_fvg_bullish := false
 
-// Start session tracking
 if is_market_session and not session_started
     session_started := true
 
-// Detect first FVG of the session
+// Find first FVG after 9:30
 if session_started and not first_fvg_found and is_after_930
-    [fvg_top, fvg_bottom, c1_high, c1_low, c3_high, c3_low, is_bull, is_bear] = get1mFVG()
-    
     if not na(fvg_top) and not na(fvg_bottom)
         first_fvg_found := true
         first_fvg_top := fvg_top
@@ -360,133 +352,33 @@ if session_started and not first_fvg_found and is_after_930
         first_fvg_c1_low := c1_low
         first_fvg_c3_high := c3_high
         first_fvg_c3_low := c3_low
-        first_fvg_bullish := is_bull
-        
-        // Draw the FVG - extended further for 1m timeframe
-        fvg_top_line := line.new(bar_index, fvg_top, bar_index + 200, fvg_top, color=color.green, width=2, style=line.style_solid)
-        fvg_bottom_line := line.new(bar_index, fvg_bottom, bar_index + 200, fvg_bottom, color=color.red, width=2, style=line.style_solid)
-        fvg_ce_line := line.new(bar_index, (fvg_top + fvg_bottom)/2, bar_index + 200, (fvg_top + fvg_bottom)/2, color=color.yellow, width=1, style=line.style_dashed)
-        fvg_box := box.new(bar_index, fvg_top, bar_index + 200, fvg_bottom, bgcolor=color.new(color.blue, 90), border_color=color.blue)
-        
-        // Debug: FVG found label
-        label.new(bar_index, math.avg(fvg_top, fvg_bottom), "1FVG FOUND\nBull: " + str.tostring(is_bull) + "\nBear: " + str.tostring(is_bear), 
-                 style=label.style_label_left, color=color.blue, textcolor=color.white, size=size.normal)
 
-// Update FVG lines - extended for 1m timeframe
-if not na(fvg_top_line)
-    line.set_x2(fvg_top_line, bar_index + 50)
-    line.set_x2(fvg_bottom_line, bar_index + 50)
-    line.set_x2(fvg_ce_line, bar_index + 50)
-    box.set_right(fvg_box, bar_index + 50)
-
-// Debug labels to check if liquidity and FVG detection is working
-if session_started and is_after_930
-    // Debug: Show session status
-    if barstate.islast
-        label.new(bar_index, high, "Session Active\nLooking for liquidity sweeps", 
-                 style=label.style_label_down, color=color.gray, textcolor=color.white, size=size.small)
-
-// Check for liquidity sweeps - improved detection
-sellside_swept_this_bar = false
-buyside_swept_this_bar = false
-
-// Always check for liquidity sweeps after 9:30, even if FVG isn't found yet
+// Check for liquidity sweeps
 if session_started and is_after_930 and not sellside_swept_first and not buyside_swept_first
     
-    // Check for sellside liquidity sweep - look for any breached levels
+    // Check sellside sweep
     if b_liq_S.size() > 0
         for i = 0 to b_liq_S.size() - 1
-            liq_level = b_liq_S.get(i)
-            // Check if liquidity was breached
-            if liq_level.brL
-                sellside_swept_this_bar := true
+            if b_liq_S.get(i).brL
+                sellside_swept_first := true
+                looking_for_long := true
                 break
     
-    // Check for buyside liquidity sweep - look for any breached levels
-    if b_liq_B.size() > 0
+    // Check buyside sweep
+    if b_liq_B.size() > 0 and not sellside_swept_first
         for i = 0 to b_liq_B.size() - 1
-            liq_level = b_liq_B.get(i)
-            // Check if liquidity was breached
-            if liq_level.brL
-                buyside_swept_this_bar := true
+            if b_liq_B.get(i).brL
+                buyside_swept_first := true
+                looking_for_short := true
                 break
-    
-    // Determine trade direction based on first sweep detected
-    if sellside_swept_this_bar and not sellside_swept_first and not buyside_swept_first
-        sellside_swept_first := true
-        looking_for_long := true
-        // Debug: Sellside swept label
-        label.new(bar_index, low, "SELLSIDE SWEPT\nLooking for LONG", 
-                 style=label.style_label_up, color=color.orange, textcolor=color.white, size=size.normal)
-        
-    if buyside_swept_this_bar and not buyside_swept_first and not sellside_swept_first
-        buyside_swept_first := true
-        looking_for_short := true
-        // Debug: Buyside swept label
-        label.new(bar_index, high, "BUYSIDE SWEPT\nLooking for SHORT", 
-                 style=label.style_label_down, color=color.orange, textcolor=color.white, size=size.normal)
 
-// DISCOUNT ENTRY LOGIC (Long after sellside sweep)
+// ENTRIES
 if looking_for_long and first_fvg_found and strategy.position_size == 0
-    // UPDATED: Trigger is close above candle 1 wick low, Stop is candle 3 wick low explicitly
-    trigger_price = first_fvg_c1_low  // Trigger: close above candle 1 wick low
-    entry_price = first_fvg_c1_low    // Entry: limit at candle 1 wick low  
-    stop_price = first_fvg_c3_low     // Stop: candle 3 wick low (no buffer)
-    
-    if close > trigger_price and entry_price > stop_price
-        strategy.entry("Long", strategy.long, limit=entry_price, comment="Discount Entry")
-        strategy.exit("Long Exit", "Long", stop=stop_price, comment="Long SL")
-        // Add visual confirmation
-        label.new(bar_index, low, "LONG ENTRY TRIGGERED\nTrigger: " + str.tostring(trigger_price) + "\nEntry: " + str.tostring(entry_price) + "\nStop: " + str.tostring(stop_price), 
-                 style=label.style_label_up, color=color.green, textcolor=color.white, size=size.normal)
+    if close > first_fvg_c1_low
+        strategy.entry("Long", strategy.long, qty=1)
+        strategy.exit("Long Exit", "Long", stop=first_fvg_c3_low)
 
-// PREMIUM ENTRY LOGIC (Short after buyside sweep)  
 if looking_for_short and first_fvg_found and strategy.position_size == 0
-    // UPDATED: Trigger is close below candle 3 wick high, Stop is candle 1 wick high explicitly
-    trigger_price = first_fvg_c3_high // Trigger: close below candle 3 wick high
-    entry_price = first_fvg_c3_high   // Entry: limit at candle 3 wick high
-    stop_price = first_fvg_c1_high    // Stop: candle 1 wick high (no buffer)
-    
-    if close < trigger_price and entry_price < stop_price
-        strategy.entry("Short", strategy.short, limit=entry_price, comment="Premium Entry")
-        strategy.exit("Short Exit", "Short", stop=stop_price, comment="Short SL")
-        // Add visual confirmation
-        label.new(bar_index, high, "SHORT ENTRY TRIGGERED\nTrigger: " + str.tostring(trigger_price) + "\nEntry: " + str.tostring(entry_price) + "\nStop: " + str.tostring(stop_price), 
-                 style=label.style_label_down, color=color.red, textcolor=color.white, size=size.normal)
-
-// PROFIT TAKING LOGIC - Take profit at opposing liquidity levels
-var bool long_profit_taken = false
-var bool short_profit_taken = false
-
-// Check for profit taking on long positions
-if strategy.position_size > 0 and not long_profit_taken
-    // Look for buyside liquidity hit for profit taking
-    if b_liq_B.size() > 0
-        for i = 0 to b_liq_B.size() - 1
-            liq_level = b_liq_B.get(i)
-            // Check if price reached buyside liquidity level
-            if high >= liq_level.ln.get_y1()
-                strategy.close("Long", comment="Profit at Buyside Liquidity")
-                long_profit_taken := true
-                label.new(bar_index, high, "PROFIT TAKEN\nBuyside Liquidity Hit", 
-                         style=label.style_label_down, color=color.blue, textcolor=color.white, size=size.normal)
-                break
-
-// Check for profit taking on short positions  
-if strategy.position_size < 0 and not short_profit_taken
-    // Look for sellside liquidity hit for profit taking
-    if b_liq_S.size() > 0
-        for i = 0 to b_liq_S.size() - 1
-            liq_level = b_liq_S.get(i)
-            // Check if price reached sellside liquidity level
-            if low <= liq_level.ln.get_y1()
-                strategy.close("Short", comment="Profit at Sellside Liquidity")
-                short_profit_taken := true
-                label.new(bar_index, low, "PROFIT TAKEN\nSellside Liquidity Hit", 
-                         style=label.style_label_up, color=color.blue, textcolor=color.white, size=size.normal)
-                break
-
-// Reset profit flags when no position
-if strategy.position_size == 0
-    long_profit_taken := false
-    short_profit_taken := false
+    if close < first_fvg_c3_high
+        strategy.entry("Short", strategy.short, qty=1)
+        strategy.exit("Short Exit", "Short", stop=first_fvg_c1_high)
