@@ -444,7 +444,7 @@ if session_started and is_after_930 and not sellside_swept_first and not buyside
         buyside_swept_first := true
         looking_for_short := true
 
-// ENTRIES - SIMPLIFIED WITH FIXED 50 POINT TAKE PROFIT
+// ENTRIES - WITH FIXED 50 POINT TAKE PROFIT AND TRAILING STOP
 if looking_for_long and first_fvg_found and strategy.position_size == 0 and not trade_taken_today
     // LONG ENTRY LOGIC (after sellside sweep):
     // Trigger: current candle closes above C3 Low
@@ -460,6 +460,10 @@ if looking_for_long and first_fvg_found and strategy.position_size == 0 and not 
         strategy.entry("Long", strategy.long, limit=current_c3_low, comment="Long Entry")
         strategy.exit("Long Exit", "Long", stop=current_c1_low, limit=take_profit_price, comment="Long SL/TP")
         trade_taken_today := true
+        
+        // Add trading setup label
+        label.new(bar_index, low - 5, "LONG SETUP\nEntry: " + str.tostring(current_c3_low) + "\nStop: " + str.tostring(current_c1_low) + "\nTake Profit: " + str.tostring(take_profit_price), 
+                 style=label.style_label_up, color=color.green, textcolor=color.white, size=size.normal)
 
 if looking_for_short and first_fvg_found and strategy.position_size == 0 and not trade_taken_today
     // SHORT ENTRY LOGIC (after buyside sweep):
@@ -476,7 +480,54 @@ if looking_for_short and first_fvg_found and strategy.position_size == 0 and not
         strategy.entry("Short", strategy.short, limit=current_c3_high, comment="Short Entry")
         strategy.exit("Short Exit", "Short", stop=current_c1_high, limit=take_profit_price, comment="Short SL/TP")
         trade_taken_today := true
+        
+        // Add trading setup label
+        label.new(bar_index, high + 5, "SHORT SETUP\nEntry: " + str.tostring(current_c3_high) + "\nStop: " + str.tostring(current_c1_high) + "\nTake Profit: " + str.tostring(take_profit_price), 
+                 style=label.style_label_down, color=color.red, textcolor=color.white, size=size.normal)
 
 // Cancel any pending orders at 12:00 PM
 if current_hour >= 12 and current_minute >= 0
     strategy.cancel_all()
+
+// END OF DAY EXIT - Close all positions at 4:10 PM
+if current_hour >= 16 and current_minute >= 10
+    strategy.close_all(comment="End of Day Exit")
+
+// TRAILING STOP LOGIC - ONLY MOVES STOP, DOESN'T CLOSE POSITION
+var bool trailing_stop_activated = false
+
+// Reset trailing stop flag when no position
+if strategy.position_size == 0
+    trailing_stop_activated := false
+
+// Trailing stop for LONG positions - ONLY UPDATE STOP LOSS
+if strategy.position_size > 0 and not trailing_stop_activated
+    entry_price = strategy.position_avg_price
+    current_profit = close - entry_price
+    
+    // If current candle closes 12+ points in profit, move stop to 2 points profit
+    if current_profit >= 12
+        new_stop = entry_price + 2
+        take_profit_price = entry_price + 50  // Keep original take profit
+        strategy.exit("Long Exit", "Long", stop=new_stop, limit=take_profit_price, comment="Trailing Stop + TP")
+        trailing_stop_activated := true
+        
+        // Visual confirmation
+        label.new(bar_index, low, "TRAILING STOP ACTIVATED\nNew Stop: " + str.tostring(new_stop) + "\nTP Still: " + str.tostring(take_profit_price), 
+                 style=label.style_label_up, color=color.orange, textcolor=color.white, size=size.small)
+
+// Trailing stop for SHORT positions - ONLY UPDATE STOP LOSS
+if strategy.position_size < 0 and not trailing_stop_activated
+    entry_price = strategy.position_avg_price
+    current_profit = entry_price - close
+    
+    // If current candle closes 12+ points in profit, move stop to 2 points profit
+    if current_profit >= 12
+        new_stop = entry_price - 2
+        take_profit_price = entry_price - 50  // Keep original take profit
+        strategy.exit("Short Exit", "Short", stop=new_stop, limit=take_profit_price, comment="Trailing Stop + TP")
+        trailing_stop_activated := true
+        
+        // Visual confirmation
+        label.new(bar_index, high, "TRAILING STOP ACTIVATED\nNew Stop: " + str.tostring(new_stop) + "\nTP Still: " + str.tostring(take_profit_price), 
+                 style=label.style_label_down, color=color.orange, textcolor=color.white, size=size.small)
